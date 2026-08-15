@@ -1,0 +1,77 @@
+services:
+  bot:
+    build: .
+    container_name: daggervpn_bot
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - daggervpn_net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  db:
+    image: postgres:16-alpine
+    container_name: daggervpn_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: daggervpn
+      POSTGRES_USER: daggervpn
+      POSTGRES_PASSWORD: changeme
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - daggervpn_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U daggervpn"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: daggervpn_redis
+    restart: unless-stopped
+    networks:
+      - daggervpn_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nginx:
+    image: nginx:alpine
+    container_name: daggervpn_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./certbot/conf:/etc/letsencrypt:ro
+      - ./certbot/www:/var/www/certbot:ro
+    depends_on:
+      - bot
+    networks:
+      - daggervpn_net
+
+volumes:
+  pgdata:
+
+networks:
+  daggervpn_net:
+    driver: bridge
