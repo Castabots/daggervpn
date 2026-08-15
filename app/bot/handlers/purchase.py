@@ -15,7 +15,7 @@ from app.bot.keyboards.inline import (
     tariff_list_keyboard,
 )
 from app.database.session import async_session_factory
-from app.services.payment_service import PaymentService, YooKassaPaymentProvider
+from app.services.payment_service import PaymentService, get_payment_provider
 from app.services.subscription_sync_service import SubscriptionSyncService
 from app.utils.formatters import format_date, format_price, format_traffic
 from sqlalchemy.future import select
@@ -25,7 +25,13 @@ from app.database.models.payment import Payment
 
 router = Router()
 logger = logging.getLogger(__name__)
-payment_service = PaymentService(YooKassaPaymentProvider())
+
+
+def _get_payment_service() -> PaymentService | None:
+    try:
+        return PaymentService(get_payment_provider())
+    except NotImplementedError:
+        return None
 
 
 class PurchaseStates(StatesGroup):
@@ -127,6 +133,14 @@ async def tariff_selected(callback: CallbackQuery, state: FSMContext):
 async def tariff_confirmed(callback: CallbackQuery, state: FSMContext, db_user=None):
     await callback.answer()
     tariff_id = int(callback.data.split(":")[1])
+
+    payment_service = _get_payment_service()
+    if payment_service is None:
+        await callback.answer(
+            "Платежи временно недоступны. Пожалуйста, обратитесь в поддержку.",
+            show_alert=True,
+        )
+        return
 
     promo_code = None
     fsm_data = await state.get_data()
@@ -331,6 +345,14 @@ async def extend_confirmed(callback: CallbackQuery, db_user=None):
     parts = callback.data.split(":")
     sub_id = int(parts[1])
     tariff_id = int(parts[2])
+
+    payment_service = _get_payment_service()
+    if payment_service is None:
+        await callback.answer(
+            "Платежи временно недоступны. Пожалуйста, обратитесь в поддержку.",
+            show_alert=True,
+        )
+        return
 
     try:
         payment = await payment_service.create_payment(

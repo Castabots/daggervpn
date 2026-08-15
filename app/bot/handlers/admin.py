@@ -20,7 +20,7 @@ from app.bot.keyboards.inline import (
 )
 from app.config.settings import settings
 from app.database.session import async_session_factory
-from app.services.payment_service import PaymentService, YooKassaPaymentProvider
+from app.services.payment_service import PaymentService
 from app.services.promo_service import PromoService
 from app.services.referral_service import ReferralService
 from app.services.user_service import UserService
@@ -35,7 +35,7 @@ from app.database.models.user import User
 router = Router()
 logger = logging.getLogger(__name__)
 user_service = UserService()
-payment_service = PaymentService(YooKassaPaymentProvider())
+payment_service = PaymentService()
 promo_service = PromoService()
 referral_service = ReferralService()
 

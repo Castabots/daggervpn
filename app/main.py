@@ -29,14 +29,19 @@ async def webhook_handler(request: web.Request):
     except Exception:
         return web.Response(status=400)
 
-    from app.services.payment_service import PaymentService, YooKassaPaymentProvider
-    payment_service = PaymentService(YooKassaPaymentProvider())
+    from app.services.payment_service import PaymentService, get_payment_provider
 
-    if payload.get("event") == "notification":
-        result = await payment_service.process_webhook(payload)
-        if result:
-            return web.Response(status=200)
-        return web.Response(status=400)
+    try:
+        payment_service = PaymentService(get_payment_provider())
+    except NotImplementedError:
+        # No payment provider configured yet; skip payment webhooks
+        pass
+    else:
+        if payload.get("event") == "notification":
+            result = await payment_service.process_webhook(payload)
+            if result:
+                return web.Response(status=200)
+            return web.Response(status=400)
 
     # Forward to aiogram update processing
     from aiogram.types import Update
@@ -53,7 +58,7 @@ async def on_startup(app: web.Application):
     bot: Bot = app["bot"]
     dp: Dispatcher = app["dp"]
 
-    webhook_url = f"{settings.WEBHOOK_BASE_URL}/webhook/bot"
+    webhook_url = f"{settings.WEBHOOK_BASE_URL.rstrip('/')}/webhook/bot"
     await bot.set_webhook(webhook_url)
     logger.info(f"Webhook set to {webhook_url}")
 

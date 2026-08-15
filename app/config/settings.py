@@ -12,9 +12,7 @@ class Settings(BaseSettings):
     REMNAWAVE_API_URL: str = ""
     REMNAWAVE_API_TOKEN: str = ""
 
-    PAYMENT_PROVIDER: str = "yookassa"
-    YOOKASSA_SHOP_ID: str = ""
-    YOOKASSA_SECRET_KEY: str = ""
+    PAYMENT_PROVIDER: str = "none"
     WEBHOOK_BASE_URL: str = ""
 
     LOG_LEVEL: str = "INFO"

@@ -73,13 +73,15 @@ async def test_referral_no_self_referral():
 
 
 @pytest.mark.asyncio
-async def test_webhook_idempotency_structure():
-    """Verify webhook processing structure prevents duplicates"""
-    from app.services.payment_service import YooKassaPaymentProvider
-    provider = YooKassaPaymentProvider()
-    invalid_payload = {"event": "invalid"}
-    result = await provider.verify_webhook(invalid_payload)
-    assert result is None
+async def test_payment_provider_not_configured():
+    """Verify that get_payment_provider raises when no provider is configured"""
+    from app.services.payment_service import get_payment_provider, PaymentService
+    with pytest.raises(NotImplementedError):
+        get_payment_provider()
+
+    # PaymentService without provider should work for stats but fail for payments
+    service = PaymentService()
+    assert service._provider is None
 
 
 @pytest.mark.asyncio

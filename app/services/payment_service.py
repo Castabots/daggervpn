@@ -1,4 +1,4 @@
-"""Payment processing service with YooKassa integration."""
+"""Payment processing service."""
 
 import logging
 from abc import ABC, abstractmethod
@@ -7,7 +7,6 @@ from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import extract, func, select
-from yookassa import Configuration, Payment as YooKassaPayment
 
 from app.config import settings
 from app.database.models import (
@@ -46,101 +45,33 @@ class PaymentProvider(ABC):
         ...
 
 
-class YooKassaPaymentProvider(PaymentProvider):
-    """YooKassa payment provider implementation."""
+def get_payment_provider() -> PaymentProvider:
+    """Factory for the configured payment provider.
 
-    def __init__(self) -> None:
-        Configuration.configure(
-            account_id=settings.YOOKASSA_SHOP_ID,
-            secret_key=settings.YOOKASSA_SECRET_KEY,
-        )
-
-    async def create_payment(
-        self, amount_kopeks: int, description: str, metadata: dict
-    ) -> dict:
-        """Create a YooKassa payment."""
-        try:
-            amount_rubles = Decimal(amount_kopeks) / Decimal(100)
-
-            payment_data = {
-                "amount": {
-                    "value": str(amount_rubles),
-                    "currency": "RUB",
-                },
-                "capture": True,
-                "description": description[:128],
-                "metadata": metadata,
-                "confirmation": {
-                    "type": "redirect",
-                    "return_url": f"https://t.me/{settings.BOT_USERNAME}",
-                },
-                "receipt": {
-                    "customer": {"full_name": "daggerVPN"},
-                    "items": [
-                        {
-                            "description": description[:128],
-                            "quantity": "1.00",
-                            "amount": {
-                                "value": str(amount_rubles),
-                                "currency": "RUB",
-                            },
-                            "vat_code": 1,
-                            "payment_subject": "service",
-                            "payment_mode": "full_prepayment",
-                        }
-                    ],
-                },
-            }
-
-            result = YooKassaPayment.create(payment_data)
-            logger.info("Created YooKassa payment: id=%s", result.id)
-            return {
-                "payment_id": result.id,
-                "payment_url": result.confirmation.confirmation_url,
-            }
-        except Exception:
-            logger.exception("Failed to create YooKassa payment")
-            raise
-
-    async def get_payment_status(self, payment_id: str) -> str:
-        """Get YooKassa payment status."""
-        try:
-            result = YooKassaPayment.find_one(payment_id)
-            return result.status
-        except Exception:
-            logger.exception("Failed to get YooKassa payment status for %s", payment_id)
-            raise
-
-    async def verify_webhook(self, payload: dict) -> dict | None:
-        """Verify and parse YooKassa webhook notification."""
-        try:
-            if payload.get("type") != "notification":
-                logger.warning("Invalid webhook type: %s", payload.get("type"))
-                return None
-
-            obj = payload.get("object")
-            if not obj or "id" not in obj:
-                logger.warning("Webhook missing object.id")
-                return None
-
-            payment_id = obj["id"]
-            status = obj.get("status", "unknown")
-
-            logger.info(
-                "Verified webhook: payment_id=%s, status=%s", payment_id, status
-            )
-            return {"payment_id": payment_id, "status": status}
-        except Exception:
-            logger.exception("Failed to verify webhook")
-            return None
+    Add your provider here when ready, e.g.:
+        if settings.PAYMENT_PROVIDER == "myprovider":
+            return MyPaymentProvider()
+    """
+    raise NotImplementedError(
+        f"Payment provider '{settings.PAYMENT_PROVIDER}' is not configured. "
+        f"Add it in get_payment_provider() in app/services/payment_service.py"
+    )
 
 
 class PaymentService:
     """High-level payment business logic."""
 
-    def __init__(self, provider: PaymentProvider) -> None:
+    def __init__(self, provider: PaymentProvider | None = None) -> None:
         self._provider = provider
         self._remnawave = RemnawaveService()
+
+    def _require_provider(self) -> PaymentProvider:
+        if self._provider is None:
+            raise NotImplementedError(
+                "Payment provider is not configured. "
+                "Add your provider in get_payment_provider() in app/services/payment_service.py"
+            )
+        return self._provider
 
     async def create_payment(
         self,
@@ -149,6 +80,7 @@ class PaymentService:
         promo_code: str | None = None,
     ) -> Payment:
         """Create a new payment for a tariff, applying discounts and promo codes."""
+        provider = self._require_provider()
         async with async_session_factory() as session:
             async with session.begin():
                 # Fetch tariff
@@ -215,7 +147,7 @@ class PaymentService:
                 if promo_code_obj:
                     metadata["promo_code_id"] = str(promo_code_obj.id)
 
-                provider_result = await self._provider.create_payment(
+                provider_result = await provider.create_payment(
                     amount_kopeks=final_amount,
                     description=f"daggerVPN - {tariff.name}",
                     metadata=metadata,
@@ -245,7 +177,8 @@ class PaymentService:
 
     async def process_webhook(self, payload: dict) -> bool:
         """Process an incoming payment webhook. Idempotent."""
-        verified = await self._provider.verify_webhook(payload)
+        provider = self._require_provider()
+        verified = await provider.verify_webhook(payload)
         if verified is None:
             logger.warning("Webhook verification failed")
             return False

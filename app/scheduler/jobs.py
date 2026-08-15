@@ -9,11 +9,14 @@ def setup_scheduler(bot) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler()
 
     from app.services.notification_service import NotificationService
-    from app.services.payment_service import PaymentService, YooKassaPaymentProvider
+    from app.services.payment_service import PaymentService, get_payment_provider
     from app.services.subscription_sync_service import SubscriptionSyncService
 
     notification_service = NotificationService()
-    payment_service = PaymentService(YooKassaPaymentProvider())
+    try:
+        payment_service = PaymentService(get_payment_provider())
+    except NotImplementedError:
+        payment_service = None
     sync_service = SubscriptionSyncService()
 
     async def job_notifications():
@@ -23,6 +26,8 @@ def setup_scheduler(bot) -> AsyncIOScheduler:
             logger.error(f"Notification job failed: {e}")
 
     async def job_fulfillment_retry():
+        if payment_service is None:
+            return
         try:
             await payment_service.retry_unfulfilled_payments()
         except Exception as e:
