@@ -13,7 +13,6 @@ class Settings(BaseSettings):
     REMNAWAVE_API_TOKEN: str = ""
 
     PAYMENT_PROVIDER: str = "none"
-    WEBHOOK_BASE_URL: str = ""
 
     LOG_LEVEL: str = "INFO"
     BOT_USERNAME: str = "daggerVPN_bot"

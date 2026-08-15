@@ -4,8 +4,6 @@ services:
     container_name: daggervpn_bot
     restart: unless-stopped
     env_file: .env
-    ports:
-      - "8080:8080"
     volumes:
       - ./data:/app/data
     depends_on:
@@ -15,12 +13,6 @@ services:
         condition: service_healthy
     networks:
       - daggervpn_net
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 15s
 
   db:
     image: postgres:16-alpine
@@ -52,22 +44,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-
-  nginx:
-    image: nginx:alpine
-    container_name: daggervpn_nginx
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - ./certbot/conf:/etc/letsencrypt:ro
-      - ./certbot/www:/var/www/certbot:ro
-    depends_on:
-      - bot
-    networks:
-      - daggervpn_net
 
 volumes:
   pgdata:
