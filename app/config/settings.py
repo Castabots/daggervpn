@@ -11,6 +11,9 @@ class Settings(BaseSettings):
 
     REMNAWAVE_API_URL: str = ""
     REMNAWAVE_API_TOKEN: str = ""
+    # Secret cookie required by the panel's nginx protection layer (e.g. "name=value").
+    # Without it the panel returns 444 (empty reply) for every request.
+    REMNAWAVE_PANEL_COOKIE: str = ""
 
     PAYMENT_PROVIDER: str = "none"
 

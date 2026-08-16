@@ -53,31 +53,10 @@ class SubscriptionService:
                 if user is None:
                     raise ValueError(f"Пользователь с Telegram ID {user_telegram_id} не найден")
 
-                # Reuse an existing panel user if we have one
-                uuid_result = await session.execute(
-                    select(Subscription.remnawave_user_uuid)
-                    .where(
-                        Subscription.user_id == user.id,
-                        Subscription.remnawave_user_uuid.is_not(None),
-                    )
-                    .order_by(Subscription.created_at.desc())
-                    .limit(1)
-                )
-                user_uuid = uuid_result.scalar_one_or_none()
-
-                if user_uuid is None:
-                    remnawave_user = await self._remnawave.create_user(
-                        username=f"dagger_{user.telegram_id}",
-                        email=f"{user.telegram_id}@dagger.local",
-                    )
-                    if remnawave_user is None:
-                        raise RuntimeError("Не удалось создать пользователя в панели")
-                    user_uuid = (
-                        remnawave_user.get("uuid")
-                        or remnawave_user.get("response", {}).get("uuid")
-                    )
-                    if not user_uuid:
-                        raise RuntimeError("Панель не вернула UUID пользователя")
+                # Generate a unique key name first — we also use it as the panel
+                # username so each issued key maps to its own panel user (no collision
+                # on re-issue to the same Telegram user).
+                key_name = await self.generate_unique_key_name(session)
 
                 expire_at = (
                     datetime.now(timezone.utc).replace(
@@ -86,26 +65,28 @@ class SubscriptionService:
                     + timedelta(days=duration_days)
                 )
 
-                subscription_result = await self._remnawave.create_subscription(
-                    user_uuid=user_uuid,
-                    traffic_limit_bytes=0,
+                rw_user = await self._remnawave.create_user(
+                    username=key_name,
                     expire_at=expire_at.isoformat(),
+                    traffic_limit_bytes=0,
                     hwid_device_limit=5,
+                    email=f"{user.telegram_id}@dagger.local",
+                    telegram_id=user.telegram_id,
                 )
-                if subscription_result is None:
-                    raise RuntimeError("Не удалось создать подписку в панели")
+                if rw_user is None:
+                    raise RuntimeError("Не удалось создать пользователя в панели")
 
-                sub_url = (
-                    subscription_result.get("subscriptionUrl")
-                    or subscription_result.get("response", {}).get("subscriptionUrl")
-                    or ""
-                )
-
-                key_name = await self.generate_unique_key_name(session)
+                fields = RemnawaveService.extract_user_fields(rw_user)
+                sub_url = fields["subscription_url"]
+                identifier = fields["identifier"]
+                if not sub_url:
+                    logger.warning(
+                        "Panel did not return subscriptionUrl for key %s", key_name
+                    )
 
                 subscription = Subscription(
                     user_id=user.id,
-                    remnawave_user_uuid=user_uuid,
+                    remnawave_user_uuid=identifier or None,
                     key_name=key_name,
                     subscription_url=sub_url,
                     tariff_id=None,
@@ -119,10 +100,11 @@ class SubscriptionService:
                 session.refresh(subscription)
 
                 logger.info(
-                    "Admin issued key %s to telegram_id=%s for %d days",
+                    "Admin issued key %s to telegram_id=%s for %d days (panel id=%s)",
                     key_name,
                     user_telegram_id,
                     duration_days,
+                    identifier,
                 )
 
         await bot.send_message(

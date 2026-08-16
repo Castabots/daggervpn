@@ -319,55 +319,35 @@ class PaymentService:
         self, session: Any, payment: Payment, user: User, tariff: Tariff
     ) -> None:
         """Provision new VPN access for a purchase."""
-        vpn_username = f"dagger_{user.telegram_id}"
-        vpn_email = f"{user.telegram_id}@dagger.local"
-
-        remnawave_user = await self._remnawave.create_user(vpn_username, vpn_email)
-        if remnawave_user is None:
-            raise RuntimeError("Failed to create VPN user")
-
-        user_uuid = (
-            remnawave_user.get("uuid")
-            or remnawave_user.get("response", {}).get("uuid")
-        )
-        if not user_uuid:
-            raise RuntimeError("No UUID in VPN user response")
+        key_name = await self._subscription_service.generate_unique_key_name(session)
 
         expire_at = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         from datetime import timedelta
         expire_at = expire_at + timedelta(days=tariff.duration_days)
 
-        traffic_limit_bytes = 0  # unlimited by default
-
-        subscription_result = await self._remnawave.create_subscription(
-            user_uuid=user_uuid,
-            traffic_limit_bytes=traffic_limit_bytes,
+        rw_user = await self._remnawave.create_user(
+            username=key_name,
             expire_at=expire_at.isoformat(),
+            traffic_limit_bytes=0,
             hwid_device_limit=5,
+            email=f"{user.telegram_id}@dagger.local",
+            telegram_id=user.telegram_id,
         )
-        if subscription_result is None:
-            raise RuntimeError("Failed to create VPN subscription")
+        if rw_user is None:
+            raise RuntimeError("Failed to create panel user")
 
-        sub_uuid = (
-            subscription_result.get("uuid")
-            or subscription_result.get("response", {}).get("uuid")
-        )
-        sub_url = (
-            subscription_result.get("subscriptionUrl")
-            or subscription_result.get("response", {}).get("subscriptionUrl")
-            or ""
-        )
-
-        key_name = await self._subscription_service.generate_unique_key_name(session)
+        fields = RemnawaveService.extract_user_fields(rw_user)
+        sub_url = fields["subscription_url"]
+        identifier = fields["identifier"]
 
         db_subscription = Subscription(
             user_id=user.id,
-            remnawave_user_uuid=user_uuid,
+            remnawave_user_uuid=identifier or None,
             key_name=key_name,
             subscription_url=sub_url,
             tariff_id=tariff.id,
             expires_at=expire_at,
-            traffic_limit_bytes=traffic_limit_bytes,
+            traffic_limit_bytes=0,
             device_limit=5,
             status="active",
         )
@@ -376,9 +356,9 @@ class PaymentService:
 
         payment.subscription_id = db_subscription.id
         logger.info(
-            "Purchase fulfilled: user_id=%s, vpn_uuid=%s, subscription_id=%s",
+            "Purchase fulfilled: user_id=%s, panel_id=%s, subscription_id=%s",
             user.id,
-            user_uuid,
+            identifier,
             db_subscription.id,
         )
 
@@ -409,14 +389,17 @@ class PaymentService:
                 )
 
         if not subscription.remnawave_user_uuid:
-            raise RuntimeError("Subscription has no remnawave_user_uuid")
+            raise RuntimeError("Subscription has no panel user identifier")
 
-        extend_result = await self._remnawave.extend_subscription(
-            subscription_uuid=subscription.remnawave_user_uuid,
-            additional_days=tariff.duration_days,
+        # Remnawave extend endpoint requires the numeric panel user id, which we
+        # store in remnawave_user_uuid (see extract_user_fields). Old records that
+        # hold a uuid instead will 400 here; those predate this integration.
+        extend_result = await self._remnawave.extend_user(
+            user_id=subscription.remnawave_user_uuid,
+            days=tariff.duration_days,
         )
         if extend_result is None:
-            raise RuntimeError("Failed to extend subscription")
+            raise RuntimeError("Failed to extend panel user")
 
         from datetime import timedelta
         subscription.expires_at = subscription.expires_at + timedelta(
