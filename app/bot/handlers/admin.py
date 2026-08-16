@@ -1,8 +1,11 @@
+import asyncio
 import json
 import logging
+import re
 from datetime import datetime, timezone
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -12,8 +15,6 @@ from app.bot.keyboards.inline import (
     admin_main_keyboard,
     admin_promos_keyboard,
     admin_referrals_keyboard,
-    admin_tariff_detail_keyboard,
-    admin_tariffs_keyboard,
     admin_user_detail_keyboard,
     admin_users_list_keyboard,
     back_keyboard,
@@ -23,13 +24,13 @@ from app.database.session import async_session_factory
 from app.services.payment_service import PaymentService
 from app.services.promo_service import PromoService
 from app.services.referral_service import ReferralService
+from app.services.subscription_service import SubscriptionService
 from app.services.user_service import UserService
 from app.utils.formatters import format_price
 from sqlalchemy import func
 from sqlalchemy.future import select
 from app.database.models.admin_action import AdminAction
 from app.database.models.payment import Payment
-from app.database.models.tariff import Tariff
 from app.database.models.user import User
 
 router = Router()
@@ -38,6 +39,7 @@ user_service = UserService()
 payment_service = PaymentService()
 promo_service = PromoService()
 referral_service = ReferralService()
+subscription_service = SubscriptionService()
 
 
 def is_admin(user_id: int) -> bool:
@@ -244,143 +246,6 @@ async def admin_payments(callback: CallbackQuery):
         )
 
 
-# --- TARIFFS ---
-
-@router.callback_query(F.data == "admin_tariffs")
-async def admin_tariffs(callback: CallbackQuery):
-    await callback.answer()
-    if not is_admin(callback.from_user.id):
-        return
-
-    async with async_session_factory() as session:
-        result = await session.execute(select(Tariff).order_by(Tariff.sort_order))
-        tariffs = result.scalars().all()
-
-    photo = FSInputFile("1.png")
-    text = "📋 <b>Управление тарифами</b>"
-    try:
-        await callback.message.edit_media(
-            media=photo, caption=text, parse_mode="HTML",
-            reply_markup=admin_tariffs_keyboard(tariffs),
-        )
-    except Exception:
-        await callback.message.delete()
-        await callback.message.answer_photo(
-            photo=photo, caption=text, parse_mode="HTML",
-            reply_markup=admin_tariffs_keyboard(tariffs),
-        )
-
-
-@router.callback_query(F.data.startswith("admin_tariff_disable:"))
-async def admin_disable_tariff(callback: CallbackQuery):
-    await callback.answer()
-    if not is_admin(callback.from_user.id):
-        return
-
-    tariff_id = int(callback.data.split(":")[1])
-    async with async_session_factory() as session:
-        async with session.begin():
-            result = await session.execute(select(Tariff).where(Tariff.id == tariff_id))
-            tariff = result.scalar_one_or_none()
-            if tariff:
-                tariff.is_active = False
-    await log_admin_action(callback.from_user.id, "disable_tariff", metadata={"tariff_id": tariff_id})
-    await callback.answer("Тариф деактивирован", show_alert=True)
-
-
-@router.callback_query(F.data.startswith("admin_tariff_enable:"))
-async def admin_enable_tariff(callback: CallbackQuery):
-    await callback.answer()
-    if not is_admin(callback.from_user.id):
-        return
-
-    tariff_id = int(callback.data.split(":")[1])
-    async with async_session_factory() as session:
-        async with session.begin():
-            result = await session.execute(select(Tariff).where(Tariff.id == tariff_id))
-            tariff = result.scalar_one_or_none()
-            if tariff:
-                tariff.is_active = True
-    await log_admin_action(callback.from_user.id, "enable_tariff", metadata={"tariff_id": tariff_id})
-    await callback.answer("Тариф активирован", show_alert=True)
-
-
-class TariffCreateState(StatesGroup):
-    name = State()
-    price = State()
-    duration = State()
-
-
-@router.callback_query(F.data == "admin_tariff_add")
-async def admin_tariff_add_start(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    if not is_admin(callback.from_user.id):
-        return
-
-    await state.set_state(TariffCreateState.name)
-    await callback.message.answer(
-        "Введите название тарифа:",
-        reply_markup=back_keyboard("admin_tariffs"),
-    )
-
-
-@router.message(TariffCreateState.name)
-async def admin_tariff_name(message: Message, state: FSMContext):
-    await state.update_data(name=message.text.strip())
-    await state.set_state(TariffCreateState.price)
-    await message.answer("Введите цену в рублях:")
-
-
-@router.message(TariffCreateState.price)
-async def admin_tariff_price(message: Message, state: FSMContext):
-    try:
-        price_rub = float(message.text.strip())
-        if price_rub < 0:
-            await message.answer("Цена не может быть отрицательной.")
-            return
-        price_kopeks = int(price_rub * 100)
-        await state.update_data(price_kopeks=price_kopeks)
-        await state.set_state(TariffCreateState.duration)
-        await message.answer("Введите длительность в днях:")
-    except ValueError:
-        await message.answer("Введите корректное число.")
-
-
-@router.message(TariffCreateState.duration)
-async def admin_tariff_duration(message: Message, state: FSMContext):
-    try:
-        days = int(message.text.strip())
-        if days <= 0:
-            await message.answer("Длительность должна быть больше 0.")
-            return
-
-        data = await state.get_data()
-        await state.clear()
-
-        async with async_session_factory() as session:
-            async with session.begin():
-                count_result = await session.execute(select(func.count()).select_from(Tariff))
-                count = count_result.scalar() or 0
-                tariff = Tariff(
-                    name=data["name"],
-                    price_kopeks=data["price_kopeks"],
-                    duration_days=days,
-                    sort_order=count + 1,
-                )
-                session.add(tariff)
-
-        await log_admin_action(
-            message.from_user.id, "create_tariff",
-            metadata={"name": data["name"], "price": data["price_kopeks"], "days": days},
-        )
-        await message.answer(
-            f"✅ Тариф «{data['name']}» создан!",
-            reply_markup=back_keyboard("admin_tariffs"),
-        )
-    except ValueError:
-        await message.answer("Введите целое число дней.")
-
-
 # --- PROMO CODES ---
 
 @router.callback_query(F.data == "admin_promos")
@@ -406,7 +271,7 @@ async def admin_promos(callback: CallbackQuery):
 
 
 class PromoCreateState(StatesGroup):
-    discount_type = State()
+    code = State()
     discount_value = State()
     max_uses = State()
     min_amount = State()
@@ -418,45 +283,54 @@ async def admin_promo_create_start(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id):
         return
 
-    await state.set_state(PromoCreateState.discount_type)
+    await state.set_state(PromoCreateState.code)
     await callback.message.answer(
-        "Тип скидки: percent или fixed?",
+        "Введите название промокода (латиница/цифры/_/- до 100 символов):",
         reply_markup=back_keyboard("admin_promos"),
     )
 
 
-@router.message(PromoCreateState.discount_type)
-async def promo_discount_type(message: Message, state: FSMContext):
-    dtype = message.text.strip().lower()
-    if dtype not in ("percent", "fixed"):
-        await message.answer("Введите 'percent' или 'fixed'.")
+@router.message(PromoCreateState.code)
+async def promo_code_text(message: Message, state: FSMContext):
+    code = message.text.strip() if message.text else ""
+    if not code or len(code) > 100 or not re.fullmatch(r"[A-Za-z0-9_-]+", code):
+        await message.answer(
+            "Некорректное имя. Допустимы только буквы A-Z/a-z, цифры, _ и - (до 100 символов)."
+        )
         return
-    await state.update_data(discount_type=dtype)
+    existing = await promo_service.get_all_active()
+    if any(p.code == code for p in existing):
+        await message.answer(f"Промокод «{code}» уже существует. Введите другое имя.")
+        return
+    await state.update_data(code=code)
     await state.set_state(PromoCreateState.discount_value)
-    unit = "%" if dtype == "percent" else "₽"
-    await message.answer(f"Введите значение скидки ({unit}):")
+    await message.answer("Размер скидки в %:")
 
 
 @router.message(PromoCreateState.discount_value)
 async def promo_discount_value(message: Message, state: FSMContext):
     try:
         value = int(message.text.strip())
-        if value <= 0:
-            await message.answer("Значение должно быть положительным.")
+        if value <= 0 or value > 100:
+            await message.answer("Скидка должна быть от 1 до 100%.")
             return
-        await state.update_data(discount_value=value)
-        await state.set_state(PromoCreateState.max_uses)
-        await message.answer("Максимум использований (пусто = безлимит):")
     except ValueError:
         await message.answer("Введите целое число.")
+        return
+    await state.update_data(discount_value=value)
+    await state.set_state(PromoCreateState.max_uses)
+    await message.answer("Максимум использований (пусто = безлимит):")
 
 
 @router.message(PromoCreateState.max_uses)
 async def promo_max_uses(message: Message, state: FSMContext):
     max_uses = None
-    if message.text.strip():
+    if message.text and message.text.strip():
         try:
             max_uses = int(message.text.strip())
+            if max_uses <= 0:
+                await message.answer("Значение должно быть положительным.")
+                return
         except ValueError:
             await message.answer("Введите число или оставьте пустым.")
             return
@@ -469,7 +343,7 @@ async def promo_max_uses(message: Message, state: FSMContext):
 @router.message(PromoCreateState.min_amount)
 async def promo_min_amount(message: Message, state: FSMContext):
     min_amount_kopeks = 0
-    if message.text.strip():
+    if message.text and message.text.strip():
         try:
             min_amount_kopeks = int(float(message.text.strip()) * 100)
         except ValueError:
@@ -479,19 +353,26 @@ async def promo_min_amount(message: Message, state: FSMContext):
     data = await state.get_data()
     await state.clear()
 
-    promo = await promo_service.create_promo(
-        discount_type=data["discount_type"],
-        discount_value=data["discount_value"],
-        max_uses=data.get("max_uses"),
-        min_amount_kopeks=min_amount_kopeks,
-    )
+    try:
+        promo = await promo_service.create_promo(
+            discount_value=data["discount_value"],
+            code=data["code"],
+            max_uses=data.get("max_uses"),
+            min_amount_kopeks=min_amount_kopeks,
+        )
+    except ValueError as exc:
+        await message.answer(
+            str(exc),
+            reply_markup=back_keyboard("admin_promos"),
+        )
+        return
 
     await log_admin_action(
         message.from_user.id, "create_promo",
-        metadata={"code": promo.code, "type": data["discount_type"], "value": data["discount_value"]},
+        metadata={"code": promo.code, "value": data["discount_value"]},
     )
     await message.answer(
-        f"✅ Промокод <b>{promo.code}</b> создан!",
+        f"✅ Промокод <b>{promo.code}</b> создан (скидка {data['discount_value']}%)!",
         parse_mode="HTML",
         reply_markup=back_keyboard("admin_promos"),
     )
@@ -595,20 +476,196 @@ async def campaign_discount(message: Message, state: FSMContext):
     data = await state.get_data()
     await state.clear()
 
-    campaign = await referral_service.create_blogger_campaign(
-        code=data["code"],
-        blogger_name=data["blogger_name"],
-        discount_percent=discount,
-    )
+    try:
+        campaign = await referral_service.create_blogger_campaign(
+            code=data["code"],
+            blogger_name=data["blogger_name"],
+            discount_percent=discount,
+        )
+    except ValueError as exc:
+        await message.answer(
+            str(exc),
+            reply_markup=back_keyboard("admin_referrals"),
+        )
+        return
 
     await log_admin_action(
         message.from_user.id, "create_campaign",
         metadata={"code": data["code"], "blogger": data["blogger_name"]},
     )
+    link = f"https://t.me/{settings.BOT_USERNAME}?start=bloger_{campaign.code}"
     await message.answer(
-        f"✅ Кампания <b>{campaign.blogger_name}</b> ({campaign.code}) создана!",
+        (
+            f"✅ Кампания <b>{campaign.blogger_name}</b> создана!\n\n"
+            f"🔗 Ссылка: {link}\n"
+            f"🎁 Промокод: <code>{campaign.code}</code> (скидка {discount}%)"
+        ),
         parse_mode="HTML",
         reply_markup=back_keyboard("admin_referrals"),
+    )
+
+
+# --- BROADCAST ---
+
+class BroadcastState(StatesGroup):
+    waiting_for_message = State()
+
+
+@router.callback_query(F.data == "admin_broadcast")
+async def admin_broadcast_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    if not is_admin(callback.from_user.id):
+        return
+    await state.set_state(BroadcastState.waiting_for_message)
+    await callback.message.answer(
+        "Отправьте сообщение для рассылки всем пользователям (/cancel — отмена):",
+        reply_markup=back_keyboard("admin_main"),
+    )
+
+
+@router.message(BroadcastState.waiting_for_message)
+async def broadcast_send(message: Message, state: FSMContext):
+    if message.text and message.text.strip().lower() in ("/cancel", "/stop"):
+        await state.clear()
+        await message.answer("Рассылка отменена.", reply_markup=back_keyboard("admin_main"))
+        return
+
+    await state.clear()
+    telegram_ids = await user_service.get_all_active_telegram_ids()
+    total = len(telegram_ids)
+    delivered = 0
+    blocked = 0
+    failed = 0
+
+    for tg_id in telegram_ids:
+        try:
+            await message.bot.copy_message(
+                chat_id=tg_id,
+                from_chat_id=message.chat.id,
+                message_id=message.message_id,
+            )
+            delivered += 1
+        except TelegramForbiddenError:
+            blocked += 1
+        except TelegramRetryAfter as exc:
+            await asyncio.sleep(min(exc.retry_after + 1, 60))
+            try:
+                await message.bot.copy_message(
+                    chat_id=tg_id,
+                    from_chat_id=message.chat.id,
+                    message_id=message.message_id,
+                )
+                delivered += 1
+            except Exception:
+                failed += 1
+        except Exception:
+            failed += 1
+        await asyncio.sleep(0.05)
+
+    await log_admin_action(
+        message.from_user.id, "broadcast",
+        metadata={"delivered": delivered, "blocked": blocked, "failed": failed, "total": total},
+    )
+    await message.answer(
+        (
+            f"📣 Рассылка завершена\n\n"
+            f"Всего получателей: {total}\n"
+            f"Доставлено: {delivered}\n"
+            f"Заблокировали бота: {blocked}\n"
+            f"Ошибок: {failed}"
+        ),
+        reply_markup=back_keyboard("admin_main"),
+    )
+
+
+# --- ISSUE KEY ---
+
+class IssueKeyState(StatesGroup):
+    waiting_for_user = State()
+    waiting_for_duration = State()
+
+
+@router.callback_query(F.data == "admin_issue_key")
+async def admin_issue_key_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    if not is_admin(callback.from_user.id):
+        return
+    await state.set_state(IssueKeyState.waiting_for_user)
+    await callback.message.answer(
+        "Введите Telegram ID пользователя, которому выдать ключ:",
+        reply_markup=back_keyboard("admin_main"),
+    )
+
+
+@router.callback_query(F.data.startswith("admin_issue_key_for:"))
+async def admin_issue_key_for_user(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    if not is_admin(callback.from_user.id):
+        return
+    try:
+        tg_id = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        await callback.answer("Некорректный ID", show_alert=True)
+        return
+    await state.update_data(target_telegram_id=tg_id)
+    await state.set_state(IssueKeyState.waiting_for_duration)
+    await callback.message.answer(
+        f"Выдаём ключ пользователю {tg_id}.\nВведите длительность в днях:",
+        reply_markup=back_keyboard("admin_main"),
+    )
+
+
+@router.message(IssueKeyState.waiting_for_user)
+async def issue_key_user(message: Message, state: FSMContext):
+    try:
+        tg_id = int(message.text.strip())
+    except (ValueError, AttributeError):
+        await message.answer("Введите числовой Telegram ID.")
+        return
+    await state.update_data(target_telegram_id=tg_id)
+    await state.set_state(IssueKeyState.waiting_for_duration)
+    await message.answer(f"Пользователь: {tg_id}. Введите длительность в днях:")
+
+
+@router.message(IssueKeyState.waiting_for_duration)
+async def issue_key_duration(message: Message, state: FSMContext):
+    data = await state.get_data()
+    target_id = data.get("target_telegram_id")
+    await state.clear()
+
+    try:
+        days = int(message.text.strip())
+        if days <= 0:
+            raise ValueError
+    except (ValueError, AttributeError):
+        await message.answer("Введите положительное целое число дней.", reply_markup=back_keyboard("admin_main"))
+        return
+
+    try:
+        subscription = await subscription_service.issue_key_by_admin(
+            bot=message.bot,
+            user_telegram_id=target_id,
+            duration_days=days,
+        )
+    except ValueError as exc:
+        await message.answer(str(exc), reply_markup=back_keyboard("admin_main"))
+        return
+    except RuntimeError as exc:
+        logger.error("Admin issue key failed: %s", exc)
+        await message.answer(f"❌ Ошибка панели: {exc}", reply_markup=back_keyboard("admin_main"))
+        return
+
+    await log_admin_action(
+        message.from_user.id, "issue_key",
+        target_user_id=target_id,
+        metadata={"key_name": subscription.key_name, "days": days},
+    )
+    await message.answer(
+        (
+            f"✅ Ключ <b>{subscription.key_name}</b> выдан пользователю {target_id} на {days} дн."
+        ),
+        parse_mode="HTML",
+        reply_markup=back_keyboard("admin_main"),
     )
 
 

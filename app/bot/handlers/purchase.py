@@ -169,7 +169,7 @@ async def my_keys(callback: CallbackQuery, db_user=None):
         text = (
             "<b>Мои ключи</b>\n\n"
             "У вас пока нет активных подписок.\n"
-            "Приобретите тариф в разделе «Купить VPN»."
+            "Приобретите тариф в разделе «Купить доступ»."
         )
         try:
             await callback.message.edit_media(

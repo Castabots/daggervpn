@@ -157,22 +157,22 @@ class NotificationService:
 
         if notification_type == "expired":
             return (
-                f"Ваша подписка daggerVPN ({key_name}) истекла.\n\n"
+                f"Ваша подписка Dagger ({key_name}) истекла.\n\n"
                 f"Продлите подписку, чтобы продолжить пользоваться сервисом."
             )
         elif notification_type == "1_day":
             return (
-                f"Ваша подписка daggerVPN ({key_name}) истекает через 1 день.\n\n"
+                f"Ваша подписка Dagger ({key_name}) истекает через 1 день.\n\n"
                 f"Не забудьте продлить подписку, чтобы не потерять доступ."
             )
         elif notification_type == "3_days":
             return (
-                f"Ваша подписка daggerVPN ({key_name}) истекает через {days_until_expiry} дня.\n\n"
+                f"Ваша подписка Dagger ({key_name}) истекает через {days_until_expiry} дня.\n\n"
                 f"Рекомендуем продлить подписку заранее."
             )
         elif notification_type == "7_days":
             return (
-                f"Ваша подписка daggerVPN ({key_name}) истекает через {days_until_expiry} дней.\n\n"
+                f"Ваша подписка Dagger ({key_name}) истекает через {days_until_expiry} дней.\n\n"
                 f"Вы можете продлить её в любое время через бота."
             )
         else:

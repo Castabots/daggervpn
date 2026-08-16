@@ -26,45 +26,74 @@ class PromoService:
 
     async def create_promo(
         self,
-        discount_type: str,
         discount_value: int,
+        code: str | None = None,
         max_uses: int | None = None,
         expires_at: datetime | None = None,
         min_amount_kopeks: int = 0,
-        one_per_user: bool = True,
-        tariff_id: int | None = None,
+        session: AsyncSession | None = None,
     ) -> PromoCode:
-        """Create a new promo code."""
-        async with async_session_factory() as session:
-            async with session.begin():
-                # Ensure unique code
-                while True:
-                    code = self.generate_code()
-                    existing = await session.execute(
-                        select(PromoCode).where(PromoCode.code == code)
-                    )
-                    if existing.scalar_one_or_none() is None:
-                        break
+        """Create a percent-based promo code.
 
-                promo = PromoCode(
-                    code=code,
-                    discount_type=discount_type,
-                    discount_value=discount_value,
-                    max_uses=max_uses,
-                    expires_at=expires_at,
-                    min_amount_kopeks=min_amount_kopeks,
-                    one_per_user=one_per_user,
-                    is_active=True,
+        If `code` is given it is used as-is (must be unique); otherwise a
+        DAGGER-XXXXX code is generated. Pass `session` to create inside an
+        existing transaction (caller commits).
+        Raises ValueError if the code already exists.
+        """
+        if session is not None:
+            return await self._create_promo_in_session(
+                session, discount_value, code, max_uses, expires_at, min_amount_kopeks
+            )
+        async with async_session_factory() as new_session:
+            async with new_session.begin():
+                return await self._create_promo_in_session(
+                    new_session, discount_value, code, max_uses, expires_at, min_amount_kopeks
                 )
-                session.add(promo)
 
-                logger.info(
-                    "Created promo code: %s (%s %s)",
-                    code,
-                    discount_type,
-                    discount_value,
+    async def _create_promo_in_session(
+        self,
+        session: AsyncSession,
+        discount_value: int,
+        code: str | None,
+        max_uses: int | None,
+        expires_at: datetime | None,
+        min_amount_kopeks: int,
+    ) -> PromoCode:
+        if code is None:
+            while True:
+                code = self.generate_code()
+                existing = await session.execute(
+                    select(PromoCode).where(PromoCode.code == code)
                 )
-                return promo
+                if existing.scalar_one_or_none() is None:
+                    break
+        else:
+            code = code.strip()
+            existing = await session.execute(
+                select(PromoCode).where(PromoCode.code == code)
+            )
+            if existing.scalar_one_or_none() is not None:
+                raise ValueError(f"Промокод «{code}» уже существует")
+
+        promo = PromoCode(
+            code=code,
+            discount_type="percent",
+            discount_value=discount_value,
+            max_uses=max_uses,
+            expires_at=expires_at,
+            min_amount_kopeks=min_amount_kopeks,
+            one_per_user=True,
+            is_active=True,
+        )
+        session.add(promo)
+        await session.flush()
+
+        logger.info(
+            "Created promo code: %s (percent %s)",
+            code,
+            discount_value,
+        )
+        return promo
 
     async def validate_promo(
         self, code: str, user_id: int, amount_kopeks: int

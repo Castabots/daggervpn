@@ -14,7 +14,7 @@ class Subscription(TimestampMixin, Base):
     remnawave_user_uuid: Mapped[str | None] = mapped_column(String(255), nullable=True)
     key_name: Mapped[str] = mapped_column(String(255), nullable=False)
     subscription_url: Mapped[str] = mapped_column(String(1024), nullable=False)
-    tariff_id: Mapped[int] = mapped_column(ForeignKey("tariffs.id"), nullable=False)
+    tariff_id: Mapped[int | None] = mapped_column(ForeignKey("tariffs.id"), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     traffic_used_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
     traffic_limit_bytes: Mapped[int] = mapped_column(BigInteger, default=0)

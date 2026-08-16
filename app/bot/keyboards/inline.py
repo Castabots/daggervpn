@@ -5,7 +5,7 @@ from app.config.settings import settings
 
 def main_menu_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
     buttons = [
-        [InlineKeyboardButton(text="💳 Купить VPN", callback_data="purchase_start")],
+        [InlineKeyboardButton(text="💳 Купить доступ", callback_data="purchase_start")],
         [InlineKeyboardButton(text="📦 Мой профиль", callback_data="profile")],
         [InlineKeyboardButton(text="🔑 Мои ключи", callback_data="my_keys")],
         [InlineKeyboardButton(text="🎁 Промокод", callback_data="promo_enter")],
@@ -121,9 +121,10 @@ def admin_main_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users")],
             [InlineKeyboardButton(text="💰 Платежи", callback_data="admin_payments")],
-            [InlineKeyboardButton(text="📋 Тарифы", callback_data="admin_tariffs")],
             [InlineKeyboardButton(text="🎁 Промокоды", callback_data="admin_promos")],
             [InlineKeyboardButton(text="👥 Рефералы", callback_data="admin_referrals")],
+            [InlineKeyboardButton(text="📣 Рассылка", callback_data="admin_broadcast")],
+            [InlineKeyboardButton(text="🔑 Выдать ключ", callback_data="admin_issue_key")],
             [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
             [InlineKeyboardButton(text="↩️ Назад", callback_data="main_menu")],
         ]
@@ -155,37 +156,13 @@ def admin_user_detail_keyboard(telegram_id: int, is_blocked: bool) -> InlineKeyb
     buttons = [
         [InlineKeyboardButton(text="📊 Подписки", callback_data=f"admin_user_subs:{telegram_id}")],
         [InlineKeyboardButton(text="💬 Написать", callback_data=f"admin_user_msg:{telegram_id}")],
+        [InlineKeyboardButton(text="🔑 Выдать ключ", callback_data=f"admin_issue_key_for:{telegram_id}")],
     ]
     if is_blocked:
         buttons.append([InlineKeyboardButton(text="✅ Разблокировать", callback_data=f"admin_user_unblock:{telegram_id}")])
     else:
         buttons.append([InlineKeyboardButton(text="🚫 Заблокировать", callback_data=f"admin_user_block:{telegram_id}")])
     buttons.append([InlineKeyboardButton(text="↩️ Назад", callback_data="admin_users")])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-def admin_tariffs_keyboard(tariffs: list) -> InlineKeyboardMarkup:
-    buttons = []
-    for tariff in tariffs:
-        status = "✅" if tariff.is_active else "❌"
-        buttons.append(
-            [InlineKeyboardButton(
-                text=f"{status} {tariff.name} — {tariff.price_kopeks // 100}₽ ({tariff.duration_days}д)",
-                callback_data=f"admin_tariff:{tariff.id}"
-            )]
-        )
-    buttons.append([InlineKeyboardButton(text="➕ Добавить тариф", callback_data="admin_tariff_add")])
-    buttons.append([InlineKeyboardButton(text="↩️ Назад", callback_data="admin_main")])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-def admin_tariff_detail_keyboard(tariff_id: int, is_active: bool) -> InlineKeyboardMarkup:
-    buttons = []
-    if is_active:
-        buttons.append([InlineKeyboardButton(text="❌ Деактивировать", callback_data=f"admin_tariff_disable:{tariff_id}")])
-    else:
-        buttons.append([InlineKeyboardButton(text="✅ Активировать", callback_data=f"admin_tariff_enable:{tariff_id}")])
-    buttons.append([InlineKeyboardButton(text="↩️ Назад", callback_data="admin_tariffs")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 

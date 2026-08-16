@@ -19,8 +19,8 @@ referral_service = ReferralService()
 async def cmd_start(message: Message, db_user=None):
     photo = FSInputFile("1.png")
     text = (
-        "🗡️ <b>daggerVPN</b>\n\n"
-        "Добро пожаловать! Здесь вы можете приобрести надёжный VPN.\n\n"
+        "🗡️ <b>Dagger</b>\n\n"
+        "Добро пожаловать! Здесь вы можете приобрести надёжный сервис.\n\n"
         "Выберите действие:"
     )
     is_admin = message.from_user.id in settings.admin_ids_list
@@ -42,7 +42,7 @@ async def show_main_menu(callback: CallbackQuery, db_user=None):
     await callback.answer()
     photo = FSInputFile("1.png")
     text = (
-        "🗡️ <b>daggerVPN</b>\n\n"
+        "🗡️ <b>Dagger</b>\n\n"
         "Главное меню. Выберите действие:"
     )
     is_admin = callback.from_user.id in settings.admin_ids_list
@@ -69,7 +69,7 @@ async def support_handler(callback: CallbackQuery):
     from app.bot.keyboards.inline import support_keyboard
     photo = FSInputFile("1.png")
     text = (
-        "🎓 <b>Поддержка daggerVPN</b>\n\n"
+        "🎓 <b>Поддержка Dagger</b>\n\n"
         "Если у вас возникли вопросы или проблемы, наша поддержка поможет!"
     )
     try:
@@ -95,8 +95,8 @@ async def info_handler(callback: CallbackQuery):
     from app.bot.keyboards.inline import info_keyboard
     photo = FSInputFile("1.png")
     text = (
-        "📖 <b>Информация о daggerVPN</b>\n\n"
-        "daggerVPN использует протокол <b>VLESS</b> — современный и безопасный "
+        "📖 <b>Информация о Dagger</b>\n\n"
+        "Dagger использует протокол <b>VLESS</b> — современный и безопасный "
         "протокол для защищённого соединения.\n\n"
         "✅ Высокая скорость\n"
         "✅ Надёжное шифрование\n"

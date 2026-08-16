@@ -150,6 +150,14 @@ class UserService:
                 logger.info("Unblocked user_id=%s", user_id)
                 return user
 
+    async def get_all_active_telegram_ids(self) -> list[int]:
+        """Telegram IDs of all non-blocked users (for broadcasts)."""
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(User.telegram_id).where(User.is_blocked.is_(False))
+            )
+            return [row[0] for row in result.all()]
+
     async def search_users(
         self, query: str, offset: int, limit: int
     ) -> tuple[list[User], int]:

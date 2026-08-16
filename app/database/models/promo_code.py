@@ -10,7 +10,7 @@ class PromoCode(TimestampMixin, Base):
     __tablename__ = "promo_codes"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    code: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
+    code: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
     discount_type: Mapped[str] = mapped_column(String(20), nullable=False)
     discount_value: Mapped[int] = mapped_column(Integer, nullable=False)
     max_uses: Mapped[int | None] = mapped_column(Integer, nullable=True)

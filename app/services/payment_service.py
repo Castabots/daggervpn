@@ -20,6 +20,7 @@ from app.database.models import (
 )
 from app.database.session import async_session_factory
 from app.services.remnawave_service import RemnawaveService
+from app.services.subscription_service import SubscriptionService
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,7 @@ class PaymentService:
     def __init__(self, provider: PaymentProvider | None = None) -> None:
         self._provider = provider
         self._remnawave = RemnawaveService()
+        self._subscription_service = SubscriptionService()
 
     def _require_provider(self) -> PaymentProvider:
         if self._provider is None:
@@ -105,12 +107,8 @@ class PaymentService:
                 discount_total = 0
                 promo_code_obj: PromoCode | None = None
 
-                # Apply user personal discount
-                if user.discount_percent > 0:
-                    user_discount = int(base_amount * user.discount_percent / 100)
-                    discount_total += user_discount
-
-                # Apply promo code
+                # Promo code and personal discount are mutually exclusive:
+                # a promo replaces the user's referral discount.
                 if promo_code:
                     pc_result = await session.execute(
                         select(PromoCode).where(
@@ -125,16 +123,15 @@ class PaymentService:
                             session, promo_code_obj, user_id, base_amount
                         )
                         if valid:
-                            if promo_code_obj.discount_type == "percent":
-                                promo_discount = int(
-                                    base_amount * promo_code_obj.discount_value / 100
-                                )
-                            else:
-                                promo_discount = promo_code_obj.discount_value
-                            discount_total += promo_discount
+                            discount_total = int(
+                                base_amount * promo_code_obj.discount_value / 100
+                            )
                         else:
                             logger.info("Promo code rejected: %s - %s", promo_code, message)
                             promo_code_obj = None
+
+                if promo_code_obj is None and user.discount_percent > 0:
+                    discount_total = int(base_amount * user.discount_percent / 100)
 
                 final_amount = max(0, base_amount - discount_total)
 
@@ -149,7 +146,7 @@ class PaymentService:
 
                 provider_result = await provider.create_payment(
                     amount_kopeks=final_amount,
-                    description=f"daggerVPN - {tariff.name}",
+                    description=f"Dagger - {tariff.name}",
                     metadata=metadata,
                 )
 
@@ -323,7 +320,7 @@ class PaymentService:
     ) -> None:
         """Provision new VPN access for a purchase."""
         vpn_username = f"dagger_{user.telegram_id}"
-        vpn_email = f"{user.telegram_id}@daggervpn.local"
+        vpn_email = f"{user.telegram_id}@dagger.local"
 
         remnawave_user = await self._remnawave.create_user(vpn_username, vpn_email)
         if remnawave_user is None:
@@ -361,10 +358,12 @@ class PaymentService:
             or ""
         )
 
+        key_name = await self._subscription_service.generate_unique_key_name(session)
+
         db_subscription = Subscription(
             user_id=user.id,
             remnawave_user_uuid=user_uuid,
-            key_name=f"dagger_{tariff.name}",
+            key_name=key_name,
             subscription_url=sub_url,
             tariff_id=tariff.id,
             expires_at=expire_at,

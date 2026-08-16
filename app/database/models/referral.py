@@ -1,5 +1,5 @@
 from sqlalchemy import BigInteger, Boolean, ForeignKey, Integer, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin
 
@@ -21,6 +21,11 @@ class ReferralCampaign(TimestampMixin, Base):
     blogger_name: Mapped[str] = mapped_column(String(255), nullable=False)
     discount_percent: Mapped[int] = mapped_column(Integer, default=10)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    promo_code_id: Mapped[int | None] = mapped_column(
+        ForeignKey("promo_codes.id", ondelete="SET NULL"), nullable=True
+    )
+
+    promo_code = relationship("PromoCode", lazy="selectin")
 
 
 class ReferralClick(TimestampMixin, Base):

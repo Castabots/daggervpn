@@ -276,7 +276,14 @@ class ReferralService:
         blogger_name: str,
         discount_percent: int = 10,
     ) -> ReferralCampaign:
-        """Create a new blogger campaign."""
+        """Create a new blogger campaign.
+
+        Automatically creates a matching promo code (same `code`) so users can
+        enter the campaign name as a promo at checkout.
+        Raises ValueError if the campaign code already exists.
+        """
+        from app.services.promo_service import PromoService
+
         async with async_session_factory() as session:
             async with session.begin():
                 existing = await session.execute(
@@ -287,18 +294,34 @@ class ReferralService:
                 if existing.scalar_one_or_none() is not None:
                     raise ValueError(f"Campaign code '{code}' already exists")
 
+                # Create promo in the same transaction
+                try:
+                    promo = await PromoService().create_promo(
+                        discount_value=discount_percent,
+                        code=code,
+                        max_uses=None,
+                        expires_at=None,
+                        min_amount_kopeks=0,
+                        session=session,
+                    )
+                except ValueError as exc:
+                    raise ValueError(str(exc)) from exc
+
                 campaign = ReferralCampaign(
                     code=code,
                     blogger_name=blogger_name,
                     discount_percent=discount_percent,
                     is_active=True,
+                    promo_code_id=promo.id,
                 )
                 session.add(campaign)
+                await session.flush()
 
                 logger.info(
-                    "Created blogger campaign: code=%s, blogger=%s",
+                    "Created blogger campaign: code=%s, blogger=%s, promo_id=%s",
                     code,
                     blogger_name,
+                    promo.id,
                 )
                 return campaign
 
