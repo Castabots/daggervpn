@@ -114,26 +114,94 @@ async def tariff_selected(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("tariff_confirm:"))
 async def tariff_confirmed(callback: CallbackQuery, state: FSMContext, db_user=None):
     await callback.answer()
+    tariff_id = int(callback.data.split(":")[1])
     await state.clear()
 
+    if not db_user:
+        await callback.answer("Ошибка: пользователь не найден", show_alert=True)
+        return
+
     photo = FSInputFile("1.png")
-    text = (
-        "<b>Оплата временно недоступна</b>\n\n"
-        "Мы скоро подключим платёжную систему.\n"
-        "По вопросам оплаты обращайтесь в поддержку."
-    )
-    from app.bot.keyboards.inline import support_keyboard
+
+    # Check if payment provider is configured
+    from app.config.settings import settings as app_settings
+    if app_settings.PAYMENT_PROVIDER == "none":
+        text = (
+            "<b>Оплата временно недоступна</b>\n\n"
+            "Мы скоро подключим платёжную систему.\n"
+            "По вопросам оплаты обращайтесь в поддержку."
+        )
+        from app.bot.keyboards.inline import support_keyboard
+        try:
+            await callback.message.edit_media(
+                media=photo, caption=text, parse_mode="HTML",
+                reply_markup=support_keyboard(),
+            )
+        except Exception:
+            await callback.message.delete()
+            await callback.message.answer_photo(
+                photo=photo, caption=text, parse_mode="HTML",
+                reply_markup=support_keyboard(),
+            )
+        return
+
+    # Create payment
     try:
-        await callback.message.edit_media(
-            media=photo, caption=text, parse_mode="HTML",
-            reply_markup=support_keyboard(),
+        from app.services.payment_service import PaymentService, get_payment_provider
+        provider = get_payment_provider()
+        payment_service = PaymentService(provider)
+
+        payment = await payment_service.create_payment(
+            user_id=db_user.id,
+            tariff_id=tariff_id,
+            promo_code=None,  # TODO: add promo code support in purchase flow
         )
-    except Exception:
-        await callback.message.delete()
-        await callback.message.answer_photo(
-            photo=photo, caption=text, parse_mode="HTML",
-            reply_markup=support_keyboard(),
+
+        text = (
+            "<b>Оплата создана</b>\n\n"
+            f"💰 Сумма: {format_price(payment.amount_kopeks)}\n\n"
+            "Нажмите кнопку ниже для оплаты:"
         )
+
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="💳 Оплатить", url=payment.payment_url)],
+                [InlineKeyboardButton(text="↩️ Назад", callback_data="purchase_start")],
+            ]
+        )
+
+        try:
+            await callback.message.edit_media(
+                media=photo, caption=text, parse_mode="HTML",
+                reply_markup=keyboard,
+            )
+        except Exception:
+            await callback.message.delete()
+            await callback.message.answer_photo(
+                photo=photo, caption=text, parse_mode="HTML",
+                reply_markup=keyboard,
+            )
+
+    except Exception as e:
+        logger.error(f"Failed to create payment: {e}")
+        text = (
+            "<b>Ошибка создания платежа</b>\n\n"
+            "Произошла ошибка при создании платежа.\n"
+            "Попробуйте позже или обратитесь в поддержку."
+        )
+        from app.bot.keyboards.inline import support_keyboard
+        try:
+            await callback.message.edit_media(
+                media=photo, caption=text, parse_mode="HTML",
+                reply_markup=support_keyboard(),
+            )
+        except Exception:
+            await callback.message.delete()
+            await callback.message.answer_photo(
+                photo=photo, caption=text, parse_mode="HTML",
+                reply_markup=support_keyboard(),
+            )
 
 
 @router.callback_query(F.data == "my_keys")

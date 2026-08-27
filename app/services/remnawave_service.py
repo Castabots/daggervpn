@@ -262,6 +262,30 @@ class RemnawaveService:
         logger.info("Deleted panel user %s", user_id)
         return True
 
+    async def update_user_expiry(self, user_uuid: str, expire_at: str) -> dict | None:
+        """Update a panel user's expiration date.
+
+        Args:
+            user_uuid: numeric panel user id
+            expire_at: ISO-8601 datetime string
+
+        Returns the updated user dict or None on failure.
+        """
+        response = await self._request(
+            "PATCH",
+            f"/users/{user_uuid}",
+            json={"expireAt": expire_at},
+        )
+        if response is None:
+            return None
+        try:
+            data = self._unwrap(response.json())
+            logger.info("Updated panel user %s expiry to %s", user_uuid, expire_at)
+            return data if isinstance(data, dict) else None
+        except ValueError:
+            logger.error("Failed to parse update_user_expiry response for user_id=%s", user_uuid)
+            return None
+
     # ------------------------------------------------------------------
     # Legacy helpers kept for sync service compatibility
     # ------------------------------------------------------------------

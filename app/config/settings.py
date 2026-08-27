@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     REMNAWAVE_PANEL_COOKIE: str = ""
 
     PAYMENT_PROVIDER: str = "none"
+    PLATEGA_MERCHANT_ID: str = ""
+    PLATEGA_SECRET: str = ""
 
     LOG_LEVEL: str = "INFO"
     BOT_USERNAME: str = "daggerVPN_bot"

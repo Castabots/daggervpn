@@ -53,6 +53,10 @@ def get_payment_provider() -> PaymentProvider:
         if settings.PAYMENT_PROVIDER == "myprovider":
             return MyPaymentProvider()
     """
+    if settings.PAYMENT_PROVIDER == "platega":
+        from app.services.platega_provider import PlategaProvider
+        return PlategaProvider()
+
     raise NotImplementedError(
         f"Payment provider '{settings.PAYMENT_PROVIDER}' is not configured. "
         f"Add it in get_payment_provider() in app/services/payment_service.py"

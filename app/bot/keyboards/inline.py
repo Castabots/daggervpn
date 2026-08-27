@@ -120,6 +120,7 @@ def admin_main_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users")],
+            [InlineKeyboardButton(text="🔑 Все ключи", callback_data="admin_keys")],
             [InlineKeyboardButton(text="💰 Платежи", callback_data="admin_payments")],
             [InlineKeyboardButton(text="🎁 Промокоды", callback_data="admin_promos")],
             [InlineKeyboardButton(text="👥 Рефералы", callback_data="admin_referrals")],
@@ -207,3 +208,38 @@ def referral_keyboard(user_telegram_id: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="↩️ Назад", callback_data="main_menu")],
         ]
     )
+
+
+def admin_keys_list_keyboard(subscriptions: list, offset: int, total: int, limit: int = 10) -> InlineKeyboardMarkup:
+    buttons = []
+    for sub in subscriptions:
+        status_icon = "🟢" if sub.status == "active" else "🔴"
+        user_info = f"ID:{sub.user.telegram_id}" if sub.user else "?"
+        buttons.append(
+            [InlineKeyboardButton(
+                text=f"{status_icon} {sub.key_name} ({user_info})",
+                callback_data=f"admin_key:{sub.id}"
+            )]
+        )
+    nav_buttons = []
+    if offset > 0:
+        nav_buttons.append(InlineKeyboardButton(text="⬅️", callback_data=f"admin_keys_page:{offset - limit}"))
+    if offset + limit < total:
+        nav_buttons.append(InlineKeyboardButton(text="➡️", callback_data=f"admin_keys_page:{offset + limit}"))
+    if nav_buttons:
+        buttons.append(nav_buttons)
+    buttons.append([InlineKeyboardButton(text="↩️ Назад", callback_data="admin_main")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def admin_key_detail_keyboard(subscription_id: int, subscription_url: str) -> InlineKeyboardMarkup:
+    buttons = []
+    if subscription_url:
+        buttons.append([InlineKeyboardButton(text="🔗 Открыть ключ", url=subscription_url)])
+    buttons.extend([
+        [InlineKeyboardButton(text="➕ Добавить дни", callback_data=f"admin_key_add_days:{subscription_id}")],
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data=f"admin_key:{subscription_id}")],
+        [InlineKeyboardButton(text="↩️ Назад", callback_data="admin_keys")],
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+

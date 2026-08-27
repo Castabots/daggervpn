@@ -14,6 +14,26 @@ services:
     networks:
       - daggervpn_net
 
+  webhook:
+    build: .
+    container_name: daggervpn_webhook
+    restart: unless-stopped
+    command: python -m app.webhook
+    env_file: .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - daggervpn_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
   db:
     image: postgres:16-alpine
     container_name: daggervpn_db

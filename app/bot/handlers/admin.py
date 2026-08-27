@@ -17,6 +17,8 @@ from app.bot.keyboards.inline import (
     admin_referrals_keyboard,
     admin_user_detail_keyboard,
     admin_users_list_keyboard,
+    admin_keys_list_keyboard,
+    admin_key_detail_keyboard,
     back_keyboard,
 )
 from app.config.settings import settings
@@ -32,6 +34,7 @@ from sqlalchemy.future import select
 from app.database.models.admin_action import AdminAction
 from app.database.models.payment import Payment
 from app.database.models.user import User
+from app.database.models.subscription import Subscription
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -666,6 +669,196 @@ async def issue_key_duration(message: Message, state: FSMContext):
         ),
         parse_mode="HTML",
         reply_markup=back_keyboard("admin_main"),
+    )
+
+
+# --- KEYS MANAGEMENT ---
+
+@router.callback_query(F.data == "admin_keys")
+@router.callback_query(F.data.startswith("admin_keys_page:"))
+async def admin_keys(callback: CallbackQuery):
+    await callback.answer()
+    if not is_admin(callback.from_user.id):
+        return
+
+    offset = 0
+    if callback.data.startswith("admin_keys_page:"):
+        offset = int(callback.data.split(":")[1])
+
+    async with async_session_factory() as session:
+        total_result = await session.execute(select(func.count()).select_from(Subscription))
+        total = total_result.scalar() or 0
+
+        result = await session.execute(
+            select(Subscription)
+            .join(User, Subscription.user_id == User.id)
+            .order_by(Subscription.created_at.desc())
+            .offset(offset)
+            .limit(10)
+        )
+        subscriptions = result.scalars().all()
+
+    photo = FSInputFile("1.png")
+    text = f"🔑 <b>Все ключи</b> ({total} всего)"
+    try:
+        await callback.message.edit_media(
+            media=photo, caption=text, parse_mode="HTML",
+            reply_markup=admin_keys_list_keyboard(subscriptions, offset, total),
+        )
+    except Exception:
+        await callback.message.delete()
+        await callback.message.answer_photo(
+            photo=photo, caption=text, parse_mode="HTML",
+            reply_markup=admin_keys_list_keyboard(subscriptions, offset, total),
+        )
+
+
+@router.callback_query(F.data.startswith("admin_key:"))
+async def admin_key_detail(callback: CallbackQuery):
+    await callback.answer()
+    if not is_admin(callback.from_user.id):
+        return
+
+    try:
+        sub_id = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        await callback.answer("Некорректный ID", show_alert=True)
+        return
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(Subscription, User)
+            .join(User, Subscription.user_id == User.id)
+            .where(Subscription.id == sub_id)
+        )
+        row = result.first()
+
+    if not row:
+        await callback.answer("Ключ не найден", show_alert=True)
+        return
+
+    subscription, user = row
+    expires_str = subscription.expires_at.strftime('%d.%m.%Y %H:%M') if subscription.expires_at else "—"
+
+    days_left = "—"
+    if subscription.expires_at:
+        now = datetime.now(timezone.utc)
+        expires_at = subscription.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        days_left = (expires_at - now).days
+
+    photo = FSInputFile("1.png")
+    text = (
+        f"🔑 <b>Ключ #{subscription.id}</b>\n\n"
+        f"Имя: <code>{subscription.key_name}</code>\n"
+        f"Пользователь: {user.first_name or '—'} (ID: <code>{user.telegram_id}</code>)\n"
+        f"Статус: {'🟢 Активен' if subscription.status == 'active' else '🔴 Неактивен'}\n"
+        f"Истекает: {expires_str}\n"
+        f"Осталось дней: {days_left}\n"
+        f"Устройств: {subscription.devices_connected}/{subscription.device_limit}\n"
+        f"Трафик: {subscription.traffic_used_bytes // (1024**3)} ГБ"
+    )
+
+    if subscription.subscription_url:
+        text += f"\n\n🔗 Ссылка: <code>{subscription.subscription_url}</code>"
+
+    try:
+        await callback.message.edit_media(
+            media=photo, caption=text, parse_mode="HTML",
+            reply_markup=admin_key_detail_keyboard(subscription.id, subscription.subscription_url),
+        )
+    except Exception:
+        await callback.message.delete()
+        await callback.message.answer_photo(
+            photo=photo, caption=text, parse_mode="HTML",
+            reply_markup=admin_key_detail_keyboard(subscription.id, subscription.subscription_url),
+        )
+
+
+class AddDaysState(StatesGroup):
+    waiting_for_days = State()
+
+
+@router.callback_query(F.data.startswith("admin_key_add_days:"))
+async def admin_key_add_days_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    if not is_admin(callback.from_user.id):
+        return
+
+    try:
+        sub_id = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        await callback.answer("Некорректный ID", show_alert=True)
+        return
+
+    await state.update_data(subscription_id=sub_id)
+    await state.set_state(AddDaysState.waiting_for_days)
+    await callback.message.answer(
+        "➕ Введите количество дней для добавления к подписке:",
+        reply_markup=back_keyboard("admin_keys"),
+    )
+
+
+@router.message(AddDaysState.waiting_for_days)
+async def admin_key_add_days_process(message: Message, state: FSMContext):
+    data = await state.get_data()
+    sub_id = data.get("subscription_id")
+    await state.clear()
+
+    try:
+        days = int(message.text.strip())
+        if days <= 0:
+            raise ValueError
+    except (ValueError, AttributeError):
+        await message.answer("Введите положительное целое число дней.", reply_markup=back_keyboard("admin_keys"))
+        return
+
+    async with async_session_factory() as session:
+        async with session.begin():
+            result = await session.execute(
+                select(Subscription).where(Subscription.id == sub_id)
+            )
+            subscription = result.scalar_one_or_none()
+
+            if not subscription:
+                await message.answer("❌ Ключ не найден.", reply_markup=back_keyboard("admin_keys"))
+                return
+
+            # Add days to expiration date
+            if subscription.expires_at:
+                subscription.expires_at = subscription.expires_at + timedelta(days=days)
+            else:
+                subscription.expires_at = datetime.now(timezone.utc) + timedelta(days=days)
+
+            # Update in Remnawave panel
+            try:
+                from app.services.remnawave_service import RemnawaveService
+                remnawave = RemnawaveService()
+
+                if subscription.remnawave_user_uuid:
+                    await remnawave.update_user_expiry(
+                        user_uuid=subscription.remnawave_user_uuid,
+                        expire_at=subscription.expires_at.isoformat()
+                    )
+            except Exception as e:
+                logger.error(f"Failed to update Remnawave expiry: {e}")
+                await message.answer(
+                    f"⚠️ Дни добавлены в базе, но не удалось обновить панель: {e}",
+                    reply_markup=back_keyboard("admin_keys")
+                )
+                return
+
+    await log_admin_action(
+        message.from_user.id, "add_days",
+        metadata={"subscription_id": sub_id, "days": days, "key_name": subscription.key_name}
+    )
+
+    await message.answer(
+        f"✅ К ключу <b>{subscription.key_name}</b> добавлено {days} дн.\n"
+        f"Новая дата истечения: {subscription.expires_at.strftime('%d.%m.%Y %H:%M')}",
+        parse_mode="HTML",
+        reply_markup=back_keyboard("admin_keys"),
     )
 
 

@@ -11,7 +11,7 @@ from app.database.session import async_session_factory
 logger = logging.getLogger(__name__)
 
 # Notification thresholds in days before expiry
-NOTIFICATION_THRESHOLDS = [7, 3, 1]
+NOTIFICATION_THRESHOLDS = [3, 1]
 
 
 class NotificationService:
@@ -61,8 +61,6 @@ class NotificationService:
                     notification_type = "1_day"
                 elif days_until_expiry <= 3:
                     notification_type = "3_days"
-                elif days_until_expiry <= 7:
-                    notification_type = "7_days"
 
                 if notification_type is None:
                     continue
@@ -167,13 +165,8 @@ class NotificationService:
             )
         elif notification_type == "3_days":
             return (
-                f"Ваша подписка Dagger ({key_name}) истекает через {days_until_expiry} дня.\n\n"
+                f"Ваша подписка Dagger ({key_name}) истекает через 3 дня.\n\n"
                 f"Рекомендуем продлить подписку заранее."
-            )
-        elif notification_type == "7_days":
-            return (
-                f"Ваша подписка Dagger ({key_name}) истекает через {days_until_expiry} дней.\n\n"
-                f"Вы можете продлить её в любое время через бота."
             )
         else:
             return ""
