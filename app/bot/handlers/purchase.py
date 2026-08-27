@@ -123,43 +123,22 @@ async def tariff_confirmed(callback: CallbackQuery, state: FSMContext, db_user=N
 
     photo = FSInputFile("1.png")
 
-    # Check if payment provider is configured
-    from app.config.settings import settings as app_settings
-    if app_settings.PAYMENT_PROVIDER == "none":
-        text = (
-            "<b>Оплата временно недоступна</b>\n\n"
-            "Мы скоро подключим платёжную систему.\n"
-            "По вопросам оплаты обращайтесь в поддержку."
-        )
-        from app.bot.keyboards.inline import support_keyboard
-        try:
-            await callback.message.edit_media(
-                media=photo, caption=text, parse_mode="HTML",
-                reply_markup=support_keyboard(),
-            )
-        except Exception:
-            await callback.message.delete()
-            await callback.message.answer_photo(
-                photo=photo, caption=text, parse_mode="HTML",
-                reply_markup=support_keyboard(),
-            )
-        return
-
-    # Create payment
+    # Create payment through Platega
     try:
         from app.services.payment_service import PaymentService, get_payment_provider
+
         provider = get_payment_provider()
         payment_service = PaymentService(provider)
 
         payment = await payment_service.create_payment(
             user_id=db_user.id,
             tariff_id=tariff_id,
-            promo_code=None,  # TODO: add promo code support in purchase flow
+            promo_code=None,
         )
 
         text = (
-            "<b>Оплата создана</b>\n\n"
-            f"💰 Сумма: {format_price(payment.amount_kopeks)}\n\n"
+            "<b>💳 Оплата</b>\n\n"
+            f"Сумма: {format_price(payment.amount_kopeks)}\n\n"
             "Нажмите кнопку ниже для оплаты:"
         )
 
@@ -183,14 +162,44 @@ async def tariff_confirmed(callback: CallbackQuery, state: FSMContext, db_user=N
                 reply_markup=keyboard,
             )
 
-    except Exception as e:
-        logger.error(f"Failed to create payment: {e}")
+    except NotImplementedError:
+        # Payment provider not configured
         text = (
-            "<b>Ошибка создания платежа</b>\n\n"
+            "<b>⚠️ Оплата недоступна</b>\n\n"
+            "Платежная система временно не настроена.\n"
+            "Обратитесь в поддержку."
+        )
+        from app.bot.keyboards.inline import support_keyboard
+        try:
+            await callback.message.edit_media(
+                media=photo, caption=text, parse_mode="HTML",
+                reply_markup=support_keyboard(),
+            )
+        except Exception:
+            await callback.message.delete()
+            await callback.message.answer_photo(
+                photo=photo, caption=text, parse_mode="HTML",
+                reply_markup=support_keyboard(),
+            )
+    except Exception as e:
+        logger.error(f"Failed to create payment: {e}", exc_info=True)
+        text = (
+            "<b>❌ Ошибка создания платежа</b>\n\n"
             "Произошла ошибка при создании платежа.\n"
             "Попробуйте позже или обратитесь в поддержку."
         )
         from app.bot.keyboards.inline import support_keyboard
+        try:
+            await callback.message.edit_media(
+                media=photo, caption=text, parse_mode="HTML",
+                reply_markup=support_keyboard(),
+            )
+        except Exception:
+            await callback.message.delete()
+            await callback.message.answer_photo(
+                photo=photo, caption=text, parse_mode="HTML",
+                reply_markup=support_keyboard(),
+            )
         try:
             await callback.message.edit_media(
                 media=photo, caption=text, parse_mode="HTML",
@@ -335,22 +344,175 @@ async def key_copy(callback: CallbackQuery):
 async def key_extend(callback: CallbackQuery):
     await callback.answer()
     sub_id = int(callback.data.split(":")[1])
+
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(Subscription).where(Subscription.id == sub_id)
+        )
+        sub = result.scalar_one_or_none()
+
+    if not sub:
+        await callback.answer("Ключ не найден", show_alert=True)
+        return
+
+    # Get available tariffs
+    async with async_session_factory() as session:
+        result = await session.execute(
+            select(Tariff).where(Tariff.is_active == True).order_by(Tariff.sort_order)
+        )
+        tariffs = result.scalars().all()
+
     photo = FSInputFile("1.png")
 
+    if not tariffs:
+        text = (
+            "<b>Продление подписки</b>\n\n"
+            "В данный момент нет доступных тарифов для продления.\n"
+            "Обратитесь в поддержку."
+        )
+        from app.bot.keyboards.inline import support_keyboard
+        try:
+            await callback.message.edit_media(
+                media=photo, caption=text, parse_mode="HTML",
+                reply_markup=support_keyboard(),
+            )
+        except Exception:
+            await callback.message.delete()
+            await callback.message.answer_photo(
+                photo=photo, caption=text, parse_mode="HTML",
+                reply_markup=support_keyboard(),
+            )
+        return
+
     text = (
-        "<b>Продление подписки</b>\n\n"
-        "Оплата временно недоступна.\n"
-        "По вопросам продления обращайтесь в поддержку."
+        f"<b>Продление подписки</b>\n\n"
+        f"Ключ: <code>{sub.key_name}</code>\n\n"
+        f"Выберите период продления:"
     )
-    from app.bot.keyboards.inline import support_keyboard
+
     try:
         await callback.message.edit_media(
             media=photo, caption=text, parse_mode="HTML",
-            reply_markup=support_keyboard(),
+            reply_markup=extend_tariff_keyboard(sub_id, tariffs),
         )
     except Exception:
         await callback.message.delete()
         await callback.message.answer_photo(
             photo=photo, caption=text, parse_mode="HTML",
-            reply_markup=support_keyboard(),
+            reply_markup=extend_tariff_keyboard(sub_id, tariffs),
         )
+
+
+@router.callback_query(F.data.startswith("extend_confirm:"))
+async def extend_confirm(callback: CallbackQuery, db_user=None):
+    await callback.answer()
+
+    parts = callback.data.split(":")
+    sub_id = int(parts[1])
+    tariff_id = int(parts[2])
+
+    if not db_user:
+        await callback.answer("Ошибка: пользователь не найден", show_alert=True)
+        return
+
+    photo = FSInputFile("1.png")
+
+    # Create renewal payment
+    try:
+        from app.services.payment_service import PaymentService, get_payment_provider
+
+        provider = get_payment_provider()
+        payment_service = PaymentService(provider)
+
+        # Create renewal payment
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(Tariff).where(Tariff.id == tariff_id)
+            )
+            tariff = result.scalar_one_or_none()
+
+        if not tariff:
+            await callback.answer("Тариф не найден", show_alert=True)
+            return
+
+        payment = await payment_service.create_payment(
+            user_id=db_user.id,
+            tariff_id=tariff_id,
+            promo_code=None,
+        )
+
+        # Link payment to subscription for renewal
+        async with async_session_factory() as session:
+            async with session.begin():
+                from app.database.models import Payment
+                result = await session.execute(
+                    select(Payment).where(Payment.id == payment.id)
+                )
+                payment_obj = result.scalar_one()
+                payment_obj.subscription_id = sub_id
+                payment_obj.type = "renewal"
+
+        text = (
+            "<b>💳 Продление подписки</b>\n\n"
+            f"Период: {tariff.name}\n"
+            f"Сумма: {format_price(payment.amount_kopeks)}\n\n"
+            "Нажмите кнопку для оплаты:"
+        )
+
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="💳 Оплатить", url=payment.payment_url)],
+                [InlineKeyboardButton(text="↩️ Назад", callback_data=f"key_detail:{sub_id}")],
+            ]
+        )
+
+        try:
+            await callback.message.edit_media(
+                media=photo, caption=text, parse_mode="HTML",
+                reply_markup=keyboard,
+            )
+        except Exception:
+            await callback.message.delete()
+            await callback.message.answer_photo(
+                photo=photo, caption=text, parse_mode="HTML",
+                reply_markup=keyboard,
+            )
+
+    except NotImplementedError:
+        text = (
+            "<b>⚠️ Оплата недоступна</b>\n\n"
+            "Платежная система временно не настроена.\n"
+            "Обратитесь в поддержку."
+        )
+        from app.bot.keyboards.inline import support_keyboard
+        try:
+            await callback.message.edit_media(
+                media=photo, caption=text, parse_mode="HTML",
+                reply_markup=support_keyboard(),
+            )
+        except Exception:
+            await callback.message.delete()
+            await callback.message.answer_photo(
+                photo=photo, caption=text, parse_mode="HTML",
+                reply_markup=support_keyboard(),
+            )
+    except Exception as e:
+        logger.error(f"Failed to create renewal payment: {e}", exc_info=True)
+        text = (
+            "<b>❌ Ошибка создания платежа</b>\n\n"
+            "Произошла ошибка при создании платежа.\n"
+            "Попробуйте позже или обратитесь в поддержку."
+        )
+        from app.bot.keyboards.inline import support_keyboard
+        try:
+            await callback.message.edit_media(
+                media=photo, caption=text, parse_mode="HTML",
+                reply_markup=support_keyboard(),
+            )
+        except Exception:
+            await callback.message.delete()
+            await callback.message.answer_photo(
+                photo=photo, caption=text, parse_mode="HTML",
+                reply_markup=support_keyboard(),
+            )
