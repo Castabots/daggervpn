@@ -20,7 +20,7 @@ class PlategaProvider(PaymentProvider):
     """
 
     def __init__(self) -> None:
-        self._base_url = "https://app.platega.io/api/v1"
+        self._base_url = settings.PLATEGA_API_URL.rstrip("/")
         self._merchant_id = settings.PLATEGA_MERCHANT_ID
         self._secret = settings.PLATEGA_SECRET
         self._timeout = 30.0

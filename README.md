@@ -1,281 +1,441 @@
-# daggerVPN — Telegram Bot для продажи VPN
+# 🚀 DaggerVPN Bot - Полная инструкция по установке и исправлению
 
-Telegram-бот для автоматической выдачи VPN-подписок через панель Remnawave.
+## ⚠️ ВАЖНО: Исправление ошибки базы данных
 
-## Стек
+### Проблема
+```
+password authentication failed for user "daggervpn"
+```
 
-- Python 3.12+, aiogram 3.x (polling)
-- PostgreSQL 16 + SQLAlchemy 2.x async + Alembic
-- httpx, APScheduler, Pydantic Settings
-- Docker + Docker Compose
+### Решение
 
-## Что делает бот
+**Шаг 1: Сбросьте пароль базы данных**
 
-**Пользователь:**
-- Смотрит тарифы, нажимает «Купить» → видит заглушку «Оплата скоро будет» (платёжка пока не подключена)
-- Просматривает свои ключи, копирует ссылку подписки
-- Вводит промокоды
-- Приглашает друзей по реферальной ссылке
+Выполните эту команду на сервере:
 
-**Администратор (по Telegram ID):**
-- Управление пользователями (просмотр, блокировка, рассылка)
-- CRUD тарифов
-- Создание промокодов
-- Реферальные кампании блогеров
-- Статистика
+```bash
+su - postgres -c "psql -c \"ALTER USER daggervpn WITH PASSWORD 'changeme';\""
+```
 
-**Автоматика:**
-- Уведомления об истечении подписки (7/3/1 день)
-- Синхронизация подписок с панелью Remnawave каждые 6 часов
+Или войдите в psql:
+
+```bash
+su - postgres
+psql
+```
+
+В psql выполните:
+```sql
+ALTER USER daggervpn WITH PASSWORD 'changeme';
+\q
+```
+
+**Шаг 2: Убедитесь, что в .env правильный пароль**
+
+Файл `.env` должен содержать:
+```env
+DATABASE_URL=postgresql+asyncpg://daggervpn:changeme@localhost:5432/daggervpn
+```
+
+**Шаг 3: Если база не существует, создайте её**
+
+```bash
+su - postgres -c "psql" << EOF
+CREATE USER daggervpn WITH PASSWORD 'changeme';
+CREATE DATABASE daggervpn OWNER daggervpn;
+GRANT ALL PRIVILEGES ON DATABASE daggervpn TO daggervpn;
+\q
+EOF
+```
+
+**Шаг 4: Запустите миграции**
+
+```bash
+cd /root/daggervpn
+alembic upgrade head
+```
 
 ---
 
-## Установка на VPS
+## 📋 Настройка .env файла
 
-### 1. Требования
+### Обязательные параметры
 
-- Ubuntu 22.04+ / Debian 12+
-- Минимум 1 ГБ RAM
-- Docker Engine 24+ и Docker Compose v2
+```env
+# Telegram Bot
+BOT_TOKEN=8938241930:AAGin5bmqhscPr5M0phN8BGBAbvS2PB8VvA
+ADMIN_IDS=8108649608
+SUPPORT_URL=https://t.me/daggerVPN_support
+BOT_USERNAME=daggerVPN_bot
 
-### 2. Установить Docker
+# Database
+DATABASE_URL=postgresql+asyncpg://daggervpn:changeme@localhost:5432/daggervpn
 
-```bash
-curl -fsSL https://get.docker.com | sh
-sudo systemctl enable docker && sudo systemctl start docker
-sudo usermod -aG docker $USER
+# Redis
+REDIS_URL=redis://localhost:6379/0
+
+# Remnawave API
+REMNAWAVE_API_URL=https://panel.daggervpn.ru/api
+REMNAWAVE_API_TOKEN=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1dWlkIjoiOGExZDZlNDEtYjNlYi00YjQ1LThhZjgtMjFmYmUwNmE1MGY5IiwidXNlcm5hbWUiOm51bGwsInJvbGUiOiJBUEkiLCJpYXQiOjE3ODY3OTgzOTEsImV4cCI6MjY1MDcxMTk5MX0.wHHDqvqizbuQmMj0FptIuqaaSyoaLiMb0rRhc2FK0sM
+REMNAWAVE_PANEL_COOKIE=
+
+# Payment Provider (Platega)
+PAYMENT_PROVIDER=platega
+PLATEGA_API_URL=https://app.platega.io/api/v1
+PLATEGA_MERCHANT_ID=ПОЛУЧИТЕ_В_ЛИЧНОМ_КАБИНЕТЕ_PLATEGA
+PLATEGA_SECRET=ПОЛУЧИТЕ_В_ЛИЧНОМ_КАБИНЕТЕ_PLATEGA
+
+# App
+LOG_LEVEL=INFO
 ```
 
-Перезайди в терминал после `usermod` чтобы права применились.
+### Где взять данные Platega?
 
-### 3. Скачать проект
-
-```bash
-git clone https://github.com/ТВОЙ_НИК/daggervpn.git
-cd daggervpn
-```
-
-### 4. Настроить .env
-
-```bash
-cp .env.example .env
-nano .env
-```
-
-Заполни каждую переменную:
-
-| Переменная | Где взять | Пример |
-|---|---|---|
-| `BOT_TOKEN` | @BotFather в Telegram → /newbot → скопировать токен | `8938241930:AAGin5bmq...` |
-| `ADMIN_IDS` | Твой Telegram ID (узнай у @userinfobot) | `8108649608` |
-| `SUPPORT_URL` | Ссылка на поддержку | `https://t.me/daggerVPN_support` |
-| `DATABASE_URL` | Не меняй, если используешь docker-compose как есть | `postgresql+asyncpg://daggervpn:changeme@db:5432/daggervpn` |
-| `REDIS_URL` | Не меняй, если используешь docker-compose как есть | `redis://redis:6379/0` |
-| `REMNAWAVE_API_URL` | URL API панели Remnawave (без /dashboard) | `https://panel.daggervpn.ru/api` |
-| `REMNAWAVE_API_TOKEN` | API-токен из панели Remnawave (Settings → API Keys) | `eyJhbGciOiJIUzI1NiIs...` |
-| `LOG_LEVEL` | Уровень логов | `INFO` или `DEBUG` |
-| `BOT_USERNAME` | Username бота без @ | `daggerVPN_bot` |
-
-### 5. Сменить пароль базы данных
-
-Открой `docker-compose.yml` и замени `changeme` на надёжный пароль в трёх местах:
-- `POSTGRES_PASSWORD`
-- Также обнови пароль в `DATABASE_URL` в `.env` (часть между `:` и `@`)
-
-Пример: если новый пароль `MyStr0ngP@ss`, то:
-```
-# docker-compose.yml
-POSTGRES_PASSWORD: MyStr0ngP@ss
-
-# .env
-DATABASE_URL=postgresql+asyncpg://daggervpn:MyStr0ngP@ss@db:5432/daggervpn
-```
-
-### 6. Положить картинку
-
-Бот использует файл `1.png` для всех экранов. Положи его в корень проекта:
-```
-daggervpn/
-├── 1.png          ← твоя картинка
-├── app/
-├── docker-compose.yml
-└── ...
-```
-
-### 7. Запустить
-
-```bash
-# Собрать и запустить все сервисы
-docker compose up -d --build
-
-# Прогнать миграции БД (создаёт таблицы)
-docker compose run --rm bot alembic upgrade head
-```
-
-### 8. Проверить
-
-```bash
-# Логи бота (должно быть "Bot started (polling mode)")
-docker compose logs -f bot
-
-# Статус контейнеров
-docker compose ps
-```
-
-Напиши `/start` своему боту в Telegram. Должно появиться главное меню.
+1. Зарегистрируйтесь на https://platega.io/
+2. Войдите в личный кабинет
+3. Перейдите в "Настройки" → "API"
+4. Скопируйте **Merchant ID** и **Secret Key**
+5. Вставьте их в `.env`
 
 ---
 
-## Как получить данные для .env
+## 🔧 Установка и запуск
 
-### BOT_TOKEN
-1. Открой @BotFather в Telegram
-2. `/newbot` → придумай имя → придумай username
-3. Скопируй токен
+### 1. Установите зависимости
 
-### ADMIN_IDS (твой Telegram ID)
-1. Напиши @userinfobot в Telegram
-2. Он ответит твоим числовым ID
-
-### REMNAWAVE_API_URL
-URL API твоей панели Remnawave. Обычно это адрес панели + `/api`:
-```
-Панель:   https://panel.daggervpn.ru/dashboard/home
-API URL:  https://panel.daggervpn.ru/api
+```bash
+cd /root/daggervpn
+pip install -r requirements.txt
 ```
 
-### REMNAWAVE_API_TOKEN
-1. Зайди в панель Remnawave
-2. Settings → API Keys (или раздел API)
-3. Создай API-ключ с ролью API
-4. Скопируй JWT-токен
+### 2. Настройте базу данных
+
+```bash
+# Сбросьте пароль (если нужно)
+su - postgres -c "psql -c \"ALTER USER daggervpn WITH PASSWORD 'changeme';\""
+
+# Или создайте базу заново
+su - postgres -c "psql" << 'EOF'
+DROP DATABASE IF EXISTS daggervpn;
+DROP USER IF EXISTS daggervpn;
+CREATE USER daggervpn WITH PASSWORD 'changeme';
+CREATE DATABASE daggervpn OWNER daggervpn;
+GRANT ALL PRIVILEGES ON DATABASE daggervpn TO daggervpn;
+EOF
+
+# Запустите миграции
+alembic upgrade head
+```
+
+### 3. Проверьте подключение
+
+```bash
+python test_db_connection.py
+```
+
+Если видите `✅ Успешное подключение` - всё работает!
+
+### 4. Запустите бота
+
+```bash
+python -m app.main
+```
+
+### 5. Запустите webhook сервер (в отдельном терминале)
+
+```bash
+python -m app.webhook
+```
+
+Или используйте screen/tmux:
+
+```bash
+# Терминал 1: Бот
+screen -S bot
+python -m app.main
+# Нажмите Ctrl+A, затем D для выхода
+
+# Терминал 2: Webhook
+screen -S webhook
+python -m app.webhook
+# Нажмите Ctrl+A, затем D для выхода
+
+# Вернуться в screen:
+screen -r bot      # вернуться к боту
+screen -r webhook  # вернуться к webhook
+```
 
 ---
 
-## Команды управления
+## 🆕 Что нового
+
+### 1. ✅ Ссылка на ключ кликабельная
+- Кнопка "🔗 Открыть подписку" в карточке ключа
+- Кнопка "📋 Скопировать ключ"
+
+### 2. ✅ Напоминания приходят за 3 дня
+- Раньше: за 7, 3 и 1 день
+- Теперь: за 3 и 1 день
+
+### 3. ✅ Админка для управления ключами
+- Раздел "🔑 Все ключи" в админке
+- Просмотр всех ключей с деталями
+- **Кнопка "➕ Добавить дни"** - продление подписки
+- Синхронизация с панелью Remnawave
+
+**Как использовать:**
+1. Админка → "🔑 Все ключи"
+2. Выбрать ключ
+3. "➕ Добавить дни"
+4. Ввести количество дней
+5. Готово!
+
+### 4. ✅ Интеграция Platega
+- Создание платежей через Platega
+- Webhook для автоматической выдачи ключей
+- Поддержка промокодов и скидок
+
+---
+
+## 🌐 Настройка webhook для Platega
+
+### Вариант 1: Через nginx (рекомендуется)
+
+Создайте конфигурацию nginx:
+
+```nginx
+server {
+    listen 80;
+    server_name ваш-домен.com;
+
+    location /webhook/ {
+        proxy_pass http://localhost:8000/webhook/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+```
+
+Активируйте и перезапустите nginx:
 
 ```bash
-# Перезапустить бота
-docker compose restart bot
+ln -s /etc/nginx/sites-available/webhook /etc/nginx/sites-enabled/
+nginx -t
+systemctl reload nginx
+```
 
-# Обновить код и перезапустить
-git pull
-docker compose build bot
-docker compose run --rm bot alembic upgrade head
-docker compose up -d
+### Вариант 2: Через ngrok (для тестирования)
 
-# Посмотреть логи
-docker compose logs -f bot
+```bash
+ngrok http 8000
+```
 
-# Остановить всё
+Используйте полученный URL в настройках Platega.
+
+### Настройка в Platega
+
+1. Войдите в личный кабинет Platega
+2. Перейдите в "Настройки" → "Webhooks"
+3. Добавьте URL: `https://ваш-домен.com/webhook/platega`
+4. Сохраните
+
+---
+
+## 🐳 Запуск через Docker
+
+### 1. Остановите текущие процессы
+
+```bash
+pkill -f "python -m app.main"
+pkill -f "python -m app.webhook"
+```
+
+### 2. Запустите через Docker
+
+```bash
 docker compose down
+docker compose up -d
+```
 
-# Полный сброс (УДАЛИТ базу данных!)
-docker compose down -v
+### 3. Проверьте логи
+
+```bash
+docker compose logs -f bot
+docker compose logs -f webhook
 ```
 
 ---
 
-## Структура проекта
+## 🔍 Проверка работы
+
+### Проверка бота
+
+```bash
+# Логи бота
+tail -f /root/daggervpn/logs/bot.log
+
+# Или если в screen
+screen -r bot
+```
+
+### Проверка webhook
+
+```bash
+# Проверка доступности
+curl http://localhost:8000/health
+
+# Должен вернуть: {"status":"ok"}
+```
+
+### Проверка базы данных
+
+```bash
+python test_db_connection.py
+```
+
+---
+
+## ❗ Частые проблемы
+
+### 1. Ошибка подключения к базе данных
+
+**Проблема:**
+```
+password authentication failed for user "daggervpn"
+```
+
+**Решение:**
+```bash
+su - postgres -c "psql -c \"ALTER USER daggervpn WITH PASSWORD 'changeme';\""
+```
+
+### 2. Модуль не найден
+
+**Проблема:**
+```
+ModuleNotFoundError: No module named 'fastapi'
+```
+
+**Решение:**
+```bash
+pip install -r requirements.txt
+```
+
+### 3. Порт 8000 занят
+
+**Проблема:**
+```
+Address already in use
+```
+
+**Решение:**
+```bash
+lsof -ti:8000 | xargs kill -9
+```
+
+### 4. Remnawave API не работает
+
+**Проблема:**
+```
+Server disconnected without sending a response
+```
+
+**Решение:**
+Проверьте, нужен ли `REMNAWAVE_PANEL_COOKIE`:
+
+```bash
+curl -H "Authorization: Bearer ВАШ_ТОКЕН" \
+     https://panel.daggervpn.ru/api/internal-squads
+```
+
+Если пустой ответ - нужен cookie от администратора панели.
+
+---
+
+## 📁 Структура файлов
 
 ```
-daggervpn/
+/root/daggervpn/
 ├── app/
-│   ├── main.py                 # Точка входа, polling
-│   ├── config/
-│   │   └── settings.py         # Переменные окружения
-│   ├── database/
-│   │   ├── session.py          # Подключение к БД
-│   │   └── models/             # Таблицы (User, Tariff, Subscription, ...)
-│   ├── services/               # Бизнес-логика
-│   │   ├── payment_service.py  # Платёжный провайдер (абстрактный, пока не подключён)
-│   │   ├── remnawave_service.py # API панели VPN
-│   │   ├── referral_service.py
-│   │   ├── promo_service.py
-│   │   ├── notification_service.py
-│   │   ├── subscription_sync_service.py
-│   │   └── user_service.py
 │   ├── bot/
-│   │   ├── handlers/           # Обработчики команд
-│   │   ├── keyboards/          # Inline-клавиатуры
-│   │   └── middlewares/        # Rate limit, авто-регистрация
-│   ├── scheduler/              # Фоновые задачи
-│   └── utils/                  # Форматтеры цен, дат, трафика
-├── alembic/                    # Миграции БД
-├── tests/                      # Тесты
-├── docker-compose.yml
-├── Dockerfile
+│   │   ├── handlers/
+│   │   │   ├── admin.py          # ✨ Управление ключами
+│   │   │   ├── purchase.py       # ✨ Интеграция Platega
+│   │   │   └── ...
+│   │   └── keyboards/
+│   │       └── inline.py         # ✨ Новые клавиатуры
+│   ├── services/
+│   │   ├── platega_provider.py   # 🆕 Провайдер Platega
+│   │   ├── payment_service.py    # ✨ Обновлён
+│   │   ├── notification_service.py # ✨ Напоминания за 3 дня
+│   │   └── remnawave_service.py  # ✨ Добавление дней
+│   ├── webhook.py                # 🆕 Webhook сервер
+│   └── main.py
+├── .env                          # Конфигурация
 ├── requirements.txt
-├── .env.example                # Шаблон конфигурации
-└── .env                        # Твои секреты (НЕ коммитить!)
+├── README.md                     # Этот файл
+├── test_db_connection.py         # Тестирование БД
+└── docker-compose.yml
+
+✨ = Обновлено
+🆕 = Новый файл
 ```
 
 ---
 
-## Как подключить платёжку (когда будешь готов)
+## 🆘 Поддержка
 
-1. Создай класс провайдера в `app/services/payment_service.py`:
-```python
-class MyPaymentProvider(PaymentProvider):
-    async def create_payment(self, amount_kopeks, description, metadata):
-        # Вызов API платёжки
-        return {"payment_id": "...", "payment_url": "..."}
+Если что-то не работает:
 
-    async def get_payment_status(self, payment_id):
-        # Проверка статуса
-        return "succeeded"
+1. **Проверьте логи:**
+   ```bash
+   tail -f logs/bot.log
+   ```
 
-    async def verify_webhook(self, payload):
-        # Проверка вебхука
-        return {"payment_id": "...", "status": "succeeded"}
-```
+2. **Проверьте базу данных:**
+   ```bash
+   python test_db_connection.py
+   ```
 
-2. Добавь в `get_payment_provider()`:
-```python
-def get_payment_provider():
-    if settings.PAYMENT_PROVIDER == "myprovider":
-        return MyPaymentProvider()
-    raise NotImplementedError(...)
-```
+3. **Проверьте webhook:**
+   ```bash
+   curl http://localhost:8000/health
+   ```
 
-3. В `.env` добавь `PAYMENT_PROVIDER=myprovider` и нужные ключи.
-
-4. Верни обработку оплаты в `app/bot/handlers/purchase.py` (замени заглушки на вызовы `payment_service.create_payment()`).
+4. **Перезапустите всё:**
+   ```bash
+   pkill -f "python -m app"
+   python -m app.main &
+   python -m app.webhook &
+   ```
 
 ---
 
-## Безопасность
+## 🎯 Быстрый старт (TL;DR)
 
-- Все секреты только в `.env`, файл в `.gitignore`
-- Права админа проверяются по Telegram ID, никогда по username
-- Деньги хранятся в копейках (int), никаких float
-- Rate limiting на все запросы (30/мин)
-- Транзакции БД для критических операций
-
-## Проблемы и решения
-
-**Бот не реагирует на команды:**
 ```bash
-docker compose logs bot
-# Ищи ошибки в логах
+cd /root/daggervpn
+
+# Исправьте базу данных
+su - postgres -c "psql -c \"ALTER USER daggervpn WITH PASSWORD 'changeme';\""
+
+# Установите зависимости
+pip install -r requirements.txt
+
+# Запустите миграции
+alembic upgrade head
+
+# Настройте .env (добавьте Platega API)
+nano .env
+
+# Запустите
+screen -S bot -dm python -m app.main
+screen -S webhook -dm python -m app.webhook
+
+# Проверьте
+screen -ls
+curl http://localhost:8000/health
 ```
 
-**Ошибка миграций:**
-```bash
-docker compose run --rm bot alembic upgrade head
-```
-
-**База не создаётся:**
-```bash
-# Проверь что db контейнер здоров
-docker compose ps
-# Если unhealthy — смотри логи
-docker compose logs db
-```
-
-**Нужно сбросить базу:**
-```bash
-docker compose down -v
-docker compose up -d --build
-docker compose run --rm bot alembic upgrade head
-```
+Готово! 🚀

@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     PAYMENT_PROVIDER: str = "none"
     PLATEGA_MERCHANT_ID: str = ""
     PLATEGA_SECRET: str = ""
+    PLATEGA_API_URL: str = "https://app.platega.io/api/v1"
 
     LOG_LEVEL: str = "INFO"
     BOT_USERNAME: str = "daggerVPN_bot"
