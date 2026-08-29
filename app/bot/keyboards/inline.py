@@ -40,11 +40,23 @@ def tariff_list_keyboard(tariffs: list) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def tariff_confirm_keyboard(tariff_id: int) -> InlineKeyboardMarkup:
+def months_selection_keyboard(tariff_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Оплатить", callback_data=f"tariff_confirm:{tariff_id}")],
+            [InlineKeyboardButton(text="1 месяц", callback_data=f"months_select:{tariff_id}:1")],
+            [InlineKeyboardButton(text="3 месяца", callback_data=f"months_select:{tariff_id}:3")],
+            [InlineKeyboardButton(text="6 месяцев", callback_data=f"months_select:{tariff_id}:6")],
+            [InlineKeyboardButton(text="12 месяцев", callback_data=f"months_select:{tariff_id}:12")],
             [InlineKeyboardButton(text="↩️ Назад", callback_data="purchase_start")],
+        ]
+    )
+
+
+def tariff_confirm_keyboard(tariff_id: int, months: int = 1) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Оплатить", callback_data=f"tariff_confirm:{tariff_id}:{months}")],
+            [InlineKeyboardButton(text="↩️ Назад", callback_data=f"tariff_select:{tariff_id}")],
         ]
     )
 

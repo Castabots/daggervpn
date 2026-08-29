@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 class PurchaseStates(StatesGroup):
     selecting_tariff = State()
+    selecting_months = State()
     confirming = State()
 
 
@@ -61,17 +62,12 @@ async def purchase_start(callback: CallbackQuery, state: FSMContext):
         lines.append(f"• <b>{t.name}</b> — {format_price(t.price_kopeks)} / {t.duration_days} дн.")
 
     text = "\n".join(lines)
-    try:
-        await callback.message.edit_media(
-            media=photo, caption=text, parse_mode="HTML",
-            reply_markup=tariff_list_keyboard(tariffs),
-        )
-    except Exception:
-        await callback.message.delete()
-        await callback.message.answer_photo(
-            photo=photo, caption=text, parse_mode="HTML",
-            reply_markup=tariff_list_keyboard(tariffs),
-        )
+
+    await callback.message.delete()
+    await callback.message.answer_photo(
+        photo=photo, caption=text, parse_mode="HTML",
+        reply_markup=tariff_list_keyboard(tariffs),
+    )
 
 
 @router.callback_query(F.data.startswith("tariff_select:"))
@@ -87,34 +83,73 @@ async def tariff_selected(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Тариф не найден", show_alert=True)
         return
 
-    await state.set_state(PurchaseStates.confirming)
+    await state.set_state(PurchaseStates.selecting_months)
     await state.update_data(tariff_id=tariff_id)
+
+    photo = FSInputFile("1.png")
+    text = (
+        f"<b>Выбор периода подписки</b>\n\n"
+        f"Тариф: <b>{tariff.name}</b>\n"
+        f"Стоимость за {tariff.duration_days} дн.: {format_price(tariff.price_kopeks)}\n\n"
+        f"Выберите на сколько месяцев хотите оформить подписку:"
+    )
+
+    from app.bot.keyboards.inline import months_selection_keyboard
+    await callback.message.delete()
+    await callback.message.answer_photo(
+        photo=photo, caption=text, parse_mode="HTML",
+        reply_markup=months_selection_keyboard(tariff_id),
+    )
+
+
+@router.callback_query(F.data.startswith("months_select:"))
+async def months_selected(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+
+    parts = callback.data.split(":")
+    tariff_id = int(parts[1])
+    months = int(parts[2])
+
+    async with async_session_factory() as session:
+        result = await session.execute(select(Tariff).where(Tariff.id == tariff_id))
+        tariff = result.scalar_one_or_none()
+
+    if not tariff:
+        await callback.answer("Тариф не найден", show_alert=True)
+        return
+
+    await state.set_state(PurchaseStates.confirming)
+    await state.update_data(tariff_id=tariff_id, months=months)
+
+    total_price = tariff.price_kopeks * months
+    total_days = tariff.duration_days * months
 
     photo = FSInputFile("1.png")
     text = (
         f"<b>Подтверждение покупки</b>\n\n"
         f"Тариф: <b>{tariff.name}</b>\n"
-        f"Длительность: {tariff.duration_days} дн.\n"
-        f"Стоимость: {format_price(tariff.price_kopeks)}\n\n"
+        f"Период: {months} мес.\n"
+        f"Длительность: {total_days} дн.\n"
+        f"Стоимость: {format_price(total_price)}\n\n"
         f"Нажмите «Оплатить» для продолжения."
     )
-    try:
-        await callback.message.edit_media(
-            media=photo, caption=text, parse_mode="HTML",
-            reply_markup=tariff_confirm_keyboard(tariff_id),
-        )
-    except Exception:
-        await callback.message.delete()
-        await callback.message.answer_photo(
-            photo=photo, caption=text, parse_mode="HTML",
-            reply_markup=tariff_confirm_keyboard(tariff_id),
-        )
+
+    from app.bot.keyboards.inline import tariff_confirm_keyboard
+    await callback.message.delete()
+    await callback.message.answer_photo(
+        photo=photo, caption=text, parse_mode="HTML",
+        reply_markup=tariff_confirm_keyboard(tariff_id, months),
+    )
 
 
 @router.callback_query(F.data.startswith("tariff_confirm:"))
 async def tariff_confirmed(callback: CallbackQuery, state: FSMContext, db_user=None):
     await callback.answer()
-    tariff_id = int(callback.data.split(":")[1])
+
+    parts = callback.data.split(":")
+    tariff_id = int(parts[1])
+    months = int(parts[2]) if len(parts) > 2 else 1
+
     await state.clear()
 
     if not db_user:
@@ -130,15 +165,29 @@ async def tariff_confirmed(callback: CallbackQuery, state: FSMContext, db_user=N
         provider = get_payment_provider()
         payment_service = PaymentService(provider)
 
+        # Get tariff to calculate total amount
+        async with async_session_factory() as session:
+            result = await session.execute(select(Tariff).where(Tariff.id == tariff_id))
+            tariff = result.scalar_one_or_none()
+
+        if not tariff:
+            await callback.answer("Тариф не найден", show_alert=True)
+            return
+
+        total_amount = tariff.price_kopeks * months
+
         payment = await payment_service.create_payment(
             user_id=db_user.id,
             tariff_id=tariff_id,
             promo_code=None,
+            months=months,
         )
 
         text = (
             "<b>💳 Оплата</b>\n\n"
-            f"Сумма: {format_price(payment.amount_kopeks)}\n\n"
+            f"Тариф: {tariff.name}\n"
+            f"Период: {months} мес.\n"
+            f"Сумма: {format_price(total_amount)}\n\n"
             "Нажмите кнопку ниже для оплаты:"
         )
 
@@ -150,17 +199,11 @@ async def tariff_confirmed(callback: CallbackQuery, state: FSMContext, db_user=N
             ]
         )
 
-        try:
-            await callback.message.edit_media(
-                media=photo, caption=text, parse_mode="HTML",
-                reply_markup=keyboard,
-            )
-        except Exception:
-            await callback.message.delete()
-            await callback.message.answer_photo(
-                photo=photo, caption=text, parse_mode="HTML",
-                reply_markup=keyboard,
-            )
+        await callback.message.delete()
+        await callback.message.answer_photo(
+            photo=photo, caption=text, parse_mode="HTML",
+            reply_markup=keyboard,
+        )
 
     except NotImplementedError:
         # Payment provider not configured
@@ -467,17 +510,11 @@ async def extend_confirm(callback: CallbackQuery, db_user=None):
             ]
         )
 
-        try:
-            await callback.message.edit_media(
-                media=photo, caption=text, parse_mode="HTML",
-                reply_markup=keyboard,
-            )
-        except Exception:
-            await callback.message.delete()
-            await callback.message.answer_photo(
-                photo=photo, caption=text, parse_mode="HTML",
-                reply_markup=keyboard,
-            )
+        await callback.message.delete()
+        await callback.message.answer_photo(
+            photo=photo, caption=text, parse_mode="HTML",
+            reply_markup=keyboard,
+        )
 
     except NotImplementedError:
         text = (

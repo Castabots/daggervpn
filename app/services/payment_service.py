@@ -84,6 +84,7 @@ class PaymentService:
         user_id: int,
         tariff_id: int,
         promo_code: str | None = None,
+        months: int = 1,
     ) -> Payment:
         """Create a new payment for a tariff, applying discounts and promo codes."""
         provider = self._require_provider()
@@ -107,7 +108,7 @@ class PaymentService:
                 if user is None:
                     raise ValueError(f"User with id={user_id} not found")
 
-                base_amount = tariff.price_kopeks
+                base_amount = tariff.price_kopeks * months
                 discount_total = 0
                 promo_code_obj: PromoCode | None = None
 
@@ -144,13 +145,14 @@ class PaymentService:
                     "user_id": str(user_id),
                     "tariff_id": str(tariff_id),
                     "telegram_id": str(user.telegram_id),
+                    "months": str(months),
                 }
                 if promo_code_obj:
                     metadata["promo_code_id"] = str(promo_code_obj.id)
 
                 provider_result = await provider.create_payment(
                     amount_kopeks=final_amount,
-                    description=f"Dagger - {tariff.name}",
+                    description=f"Dagger - {tariff.name} ({months} мес.)",
                     metadata=metadata,
                 )
 
@@ -169,9 +171,10 @@ class PaymentService:
                 session.add(payment)
 
                 logger.info(
-                    "Created payment: user_id=%s, tariff=%s, amount=%d kopeks",
+                    "Created payment: user_id=%s, tariff=%s, months=%d, amount=%d kopeks",
                     user_id,
                     tariff.name,
+                    months,
                     final_amount,
                 )
                 return payment
@@ -325,9 +328,18 @@ class PaymentService:
         """Provision new VPN access for a purchase."""
         key_name = await self._subscription_service.generate_unique_key_name(session)
 
+        # Extract months from payment metadata
+        months = 1
+        if payment.provider_payment_id:
+            # Try to get months from Payment model if we add a field, or from metadata
+            # For now, we'll calculate from amount
+            if payment.amount_kopeks > 0 and tariff.price_kopeks > 0:
+                months = max(1, round(payment.amount_kopeks / tariff.price_kopeks))
+
         expire_at = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         from datetime import timedelta
-        expire_at = expire_at + timedelta(days=tariff.duration_days)
+        total_days = tariff.duration_days * months
+        expire_at = expire_at + timedelta(days=total_days)
 
         rw_user = await self._remnawave.create_user(
             username=key_name,
@@ -360,10 +372,12 @@ class PaymentService:
 
         payment.subscription_id = db_subscription.id
         logger.info(
-            "Purchase fulfilled: user_id=%s, panel_id=%s, subscription_id=%s",
+            "Purchase fulfilled: user_id=%s, panel_id=%s, subscription_id=%s, months=%d, days=%d",
             user.id,
             identifier,
             db_subscription.id,
+            months,
+            total_days,
         )
 
     async def _fulfill_renewal(
